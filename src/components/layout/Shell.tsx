@@ -55,6 +55,14 @@ function NavBar() {
   const [more, setMore] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
   const loc = useLocation()
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
+
+  // The navbar scrolls horizontally, which clips absolutely-positioned children, so the menu is fixed to the viewport.
+  const openMore = () => {
+    const r = moreRef.current?.getBoundingClientRect()
+    if (r) setMenuPos({ top: r.bottom, left: Math.max(8, Math.min(r.left, window.innerWidth - 198)) })
+    setMore(true)
+  }
 
   useEffect(() => {
     setMore(false)
@@ -87,11 +95,16 @@ function NavBar() {
   return (
     <nav className="navbar" aria-label="Primary">
       {ROUTES.filter((r) => r.primary).map(link)}
-      <div className="nav__more" ref={moreRef}>
-        <button type="button" className={clsx('nav__link', moreActive && 'active')} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore((m) => !m)}>
+      <div
+        className="nav__more"
+        ref={moreRef}
+        onMouseEnter={openMore}
+        onMouseLeave={() => setMore(false)}
+      >
+        <button type="button" className={clsx('nav__link', moreActive && 'active')} aria-expanded={more} aria-haspopup="menu" onClick={openMore}>
           More <ChevronDown size={14} />
         </button>
-        {more && <div className="nav__menu" role="menu">{secondary.map(link)}</div>}
+        {more && <div className="nav__menu" role="menu" style={{ top: menuPos.top, left: menuPos.left }}>{secondary.map(link)}</div>}
       </div>
     </nav>
   )
