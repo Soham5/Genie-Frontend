@@ -57,6 +57,21 @@ export interface DataIndex {
   incidents: Incident[]
 }
 
+export type LegSource = 'logged' | 'derived' | 'unknown'
+
+/** One option leg of an F&O position as recovered from the logs. */
+export interface TradeLeg {
+  no: number
+  action: 'BUY' | 'SELL'
+  type: 'CE' | 'PE'
+  strike: number | null
+  price: number | null
+  symbol: string | null
+  qty: number
+  lots: number
+  source: LegSource
+}
+
 export interface Trade {
   id: string
   strategy: string
@@ -65,6 +80,11 @@ export interface Trade {
   exchange: string | null
   action: 'BUY' | 'SELL' | string | null
   qty: number
+  underlying?: string | null
+  expiry?: string | null
+  netCredit?: number | null
+  lotSize?: number
+  legs?: TradeLeg[]
   entryDate: string | null
   entryT: string | null
   exitDate: string | null

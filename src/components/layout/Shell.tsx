@@ -1,30 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Command, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Command, Moon, Sun } from 'lucide-react'
 import { ROUTES } from '@/routes'
-import { useSelectedDate, useStore } from '@/data/store'
+import { useDay, useSelectedDate, useStore } from '@/data/store'
 import { useTheme } from '@/hooks/useTheme'
-import { useLiveApi } from '@/hooks/useLiveApi'
-import { fmtAgo, fmtDate } from '@/lib/format'
+import { useLiveBook } from '@/hooks/useLiveBook'
+import { fmtDate, fmtINR, fmtNum, pnlTone } from '@/lib/format'
 import { Badge, Dot } from '@/components/ui/Panel'
 import { CommandPalette } from './CommandPalette'
 import { clsx } from '@/lib/clsx'
 
-const GROUPS = ['Monitor', 'Markets & Risk', 'Operations', 'Research', 'Configure'] as const
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
 
 export function Shell() {
   const [theme, toggleTheme] = useTheme()
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('genie-nav-collapsed') === '1')
-  const [mobileOpen, setMobileOpen] = useState(false)
   const [palette, setPalette] = useState(false)
   const loc = useLocation()
 
   useEffect(() => {
-    localStorage.setItem('genie-nav-collapsed', collapsed ? '1' : '0')
-  }, [collapsed])
-  useEffect(() => {
-    setMobileOpen(false)
     window.scrollTo({ top: 0 })
   }, [loc.pathname])
 
@@ -40,18 +33,12 @@ export function Shell() {
   }, [])
 
   return (
-    <div className="shell" data-collapsed={collapsed} data-mobile-open={mobileOpen}>
-      <Sidebar collapsed={collapsed} />
-      {mobileOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 25 }} onClick={() => setMobileOpen(false)} aria-hidden />}
+    <div className="shell">
+      <header className="head">
+        <Ticker theme={theme} toggleTheme={toggleTheme} onPalette={() => setPalette(true)} />
+        <NavBar />
+      </header>
       <div className="main">
-        <Topbar
-          theme={theme}
-          toggleTheme={toggleTheme}
-          collapsed={collapsed}
-          onCollapse={() => setCollapsed((c) => !c)}
-          onMenu={() => setMobileOpen((o) => !o)}
-          onPalette={() => setPalette(true)}
-        />
         <main className="page" id="content">
           <Outlet />
         </main>
@@ -61,80 +48,100 @@ export function Shell() {
   )
 }
 
-function Sidebar({ collapsed }: { collapsed: boolean }) {
+function NavBar() {
   const { search } = useLocation()
   const { index } = useStore()
   const latest = index.days.find((d) => d.date === index.latestSession)
+  const [more, setMore] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
+  const loc = useLocation()
+
+  useEffect(() => {
+    setMore(false)
+  }, [loc.pathname])
+
+  useEffect(() => {
+    if (!more) return
+    const close = (e: MouseEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMore(false)
+    }
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setMore(false)
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [more])
+
+  const link = (r: (typeof ROUTES)[number]) => (
+    <NavLink key={r.path} to={{ pathname: r.path, search }} end={r.path === '/'} className={({ isActive }) => clsx('nav__link', isActive && 'active')}>
+      <r.icon size={15} />
+      <span>{r.label}</span>
+      {r.path === '/system' && latest && latest.errors > 0 && <span className="nav__badge"><Badge tone="neg">{latest.errors}</Badge></span>}
+    </NavLink>
+  )
+  const secondary = ROUTES.filter((r) => !r.primary)
+  const moreActive = secondary.some((r) => r.path === loc.pathname)
+
   return (
-    <aside className="sidebar" aria-label="Primary">
-      <div className="brand">
-        <div className="brand__mark">G</div>
-        <div className="brand__text">
-          <div className="brand__name">Genie</div>
-          <div className="brand__sub">Quant console</div>
-        </div>
+    <nav className="navbar" aria-label="Primary">
+      {ROUTES.filter((r) => r.primary).map(link)}
+      <div className="nav__more" ref={moreRef}>
+        <button type="button" className={clsx('nav__link', moreActive && 'active')} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore((m) => !m)}>
+          More <ChevronDown size={14} />
+        </button>
+        {more && <div className="nav__menu" role="menu">{secondary.map(link)}</div>}
       </div>
-      <nav className="nav">
-        {GROUPS.map((g) => (
-          <div key={g}>
-            <div className="nav__label">{g}</div>
-            {ROUTES.filter((r) => r.group === g).map((r) => (
-              <NavLink
-                key={r.path}
-                to={{ pathname: r.path, search }}
-                end={r.path === '/'}
-                className={({ isActive }) => clsx('nav__link', isActive && 'active')}
-                title={collapsed ? r.label : undefined}
-              >
-                <r.icon size={18} />
-                <span className="nav__text">{r.label}</span>
-                {r.path === '/system' && latest && latest.errors > 0 && <span className="nav__badge"><Badge tone="neg">{latest.errors}</Badge></span>}
-              </NavLink>
-            ))}
-          </div>
-        ))}
-      </nav>
-      <div className="sidebar__foot">
-        <p className="sidebar__note">Paper-trading snapshot derived from EC2 structlog output. Not investment advice.</p>
-      </div>
-    </aside>
+    </nav>
   )
 }
 
-function Topbar({ theme, toggleTheme, collapsed, onCollapse, onMenu, onPalette }: {
-  theme: string
-  toggleTheme: () => void
-  collapsed: boolean
-  onCollapse: () => void
-  onMenu: () => void
-  onPalette: () => void
-}) {
+function Ticker({ theme, toggleTheme, onPalette }: { theme: string; toggleTheme: () => void; onPalette: () => void }) {
   const { index } = useStore()
   const [date, setDate] = useSelectedDate()
-  const live = useLiveApi()
+  const { day } = useDay(date)
+  const book = useLiveBook()
   const sessions = index.days.filter((d) => d.hasSession)
   const other = index.days.filter((d) => !d.hasSession)
   const cur = index.days.find((d) => d.date === date)
   const pos = sessions.findIndex((d) => d.date === date)
-
   const step = (dir: -1 | 1) => {
     const next = sessions[pos + dir]
     if (next) setDate(next.date)
   }
 
-  const tone = { healthy: 'pos', degraded: 'warn', incident: 'neg', idle: 'muted' }[cur?.status ?? 'idle'] as 'pos' | 'warn' | 'neg' | 'muted'
-  const label = { healthy: 'Healthy', degraded: 'Degraded', incident: 'Incident', idle: 'No session' }[cur?.status ?? 'idle']
+  const vix = cur?.vixClose ?? cur?.vixOpen ?? null
+  const pcr = day?.chain.filter((c) => c.index === 'NIFTY').at(-1)?.pcr ?? null
+  const live = book.state === 'live'
+  const mtm = live ? book.totals.open : cur?.net ?? null
+  const apiTone = { off: undefined, connecting: 'warn', live: 'pos', error: 'neg' }[book.state] as 'warn' | 'pos' | 'neg' | undefined
 
   return (
-    <header className="topbar">
-      <button className="btn btn--ghost btn--icon show-sm-only" onClick={onMenu} aria-label="Open navigation"><Menu size={18} /></button>
-      <button className="btn btn--ghost btn--icon hide-sm" onClick={onCollapse} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-      </button>
+    <div className="ticker">
+      <div className="brand">
+        <div className="brand__mark">G</div>
+        <span className="brand__name">Genie</span>
+      </div>
+      <span className="ticker__chip hide-sm">INDIA VIX <strong>{fmtNum(vix)}</strong></span>
+      <span className="ticker__chip hide-sm">NIFTY PCR <strong>{fmtNum(pcr)}</strong></span>
+      {cur?.regime && <span className="ticker__chip hide-sm">REGIME <strong style={{ fontFamily: 'inherit' }}>{cur.regime}</strong></span>}
+
+      <div className="topbar__spacer" />
+
+      <span className="ticker__chip hide-sm" title={live ? 'Streaming from the Genie API' : book.error ?? 'Static snapshot of the logs. Add an API URL in Settings for live data.'}>
+        <Dot tone={apiTone} pulse={book.state === 'connecting'} />
+        {live ? 'LIVE' : book.state === 'off' ? 'SNAPSHOT' : book.state === 'connecting' ? 'CONNECTING' : 'API DOWN'}
+      </span>
+      <span className="hide-xs"><Badge tone="outline">{(cur?.mode ?? 'paper').toUpperCase()}</Badge></span>
+      <div className="mtm" title={live ? 'Live unrealised P&L across open positions' : 'Net realised P&L for the selected session'}>
+        <span className="mtm__label">{live ? 'MTM' : 'Day net'}</span>
+        <span className={clsx('mtm__value', pnlTone(mtm))}>{mtm == null ? '—' : fmtINR(mtm, { sign: true })}</span>
+      </div>
 
       <div className="row" role="group" aria-label="Session selector">
-        <button className="btn btn--ghost btn--icon" onClick={() => step(-1)} disabled={pos <= 0} aria-label="Previous session"><ChevronLeft size={16} /></button>
-        <select className="select" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Session date" style={{ minWidth: 150 }}>
+        <button className="btn btn--ghost btn--icon hide-xs" onClick={() => step(-1)} disabled={pos <= 0} aria-label="Previous session"><ChevronLeft size={16} /></button>
+        <select className="select" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Session date" style={{ minWidth: 120, maxWidth: 170 }}>
           <optgroup label="Sessions">
             {[...sessions].reverse().map((d) => (
               <option key={d.date} value={d.date}>{fmtDate(d.date, 'long')}{d.date === index.latestSession ? ' · latest' : ''}</option>
@@ -146,28 +153,11 @@ function Topbar({ theme, toggleTheme, collapsed, onCollapse, onMenu, onPalette }
             ))}
           </optgroup>
         </select>
-        <button className="btn btn--ghost btn--icon" onClick={() => step(1)} disabled={pos < 0 || pos >= sessions.length - 1} aria-label="Next session"><ChevronRight size={16} /></button>
+        <button className="btn btn--ghost btn--icon hide-xs" onClick={() => step(1)} disabled={pos < 0 || pos >= sessions.length - 1} aria-label="Next session"><ChevronRight size={16} /></button>
       </div>
 
-      <Badge tone={tone} dot>{label}</Badge>
-      <Badge tone="outline">{(cur?.mode ?? 'paper').toUpperCase()}</Badge>
-
-      <div className="topbar__spacer" />
-
-      <span className="muted hide-sm" style={{ fontSize: 12 }} title={`Dataset generated ${index.generatedAt}`}>
-        Snapshot · {fmtAgo(index.generatedAt)}
-      </span>
-      {live.state !== 'off' && (
-        <span className="row hide-sm" style={{ fontSize: 12 }} title={`${live.base}/api/v1/health/live`}>
-          <Dot tone={live.state === 'up' ? 'pos' : live.state === 'down' ? 'neg' : 'warn'} pulse={live.state === 'checking'} />
-          API {live.state}
-        </span>
-      )}
-      <button className="btn hide-sm" onClick={onPalette} aria-label="Open command palette">
-        <Command size={14} /> <span className="muted">Search</span> <kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd>
-      </button>
-      <button className="btn btn--ghost btn--icon show-sm-only" onClick={onPalette} aria-label="Open command palette"><Command size={16} /></button>
+      <button className="btn btn--ghost btn--icon" onClick={onPalette} aria-label="Open command palette" title={`Search (${isMac ? '⌘' : 'Ctrl'} K)`}><Command size={16} /></button>
       <button className="btn btn--ghost btn--icon" onClick={toggleTheme} aria-label="Toggle theme">{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button>
-    </header>
+    </div>
   )
 }

@@ -69,12 +69,11 @@
 :root {
   --font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  --radius: 10px;
-  --radius-sm: 6px;
-  --sidebar-w: 232px;
-  --sidebar-w-collapsed: 64px;
-  --topbar-h: 56px;
-  --gap: 16px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --buy: #4184f3;
+  --sell: #ff5722;
+  --gap: 14px;
 }
 
 *,

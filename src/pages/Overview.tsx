@@ -2,7 +2,8 @@ import { useMemo } from 'react'
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from 'recharts'
 import { Link, useLocation } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
-import { useSelectedDate, useStore } from '@/data/store'
+import { useSelectedDate, useStore, useDay } from '@/data/store'
+import { useLiveBook } from '@/hooks/useLiveBook'
 import { Badge, Callout, Panel, PageHead } from '@/components/ui/Panel'
 import { Stat } from '@/components/ui/Stat'
 import { DayGate, FeedList } from '@/components/ui/bits'
@@ -29,10 +30,11 @@ export default function Overview() {
   return (
     <>
       <PageHead
-        title="Overview"
+        title="Dashboard"
         sub={<>Session <strong>{fmtDate(date, 'long')}</strong> · paper trading · NSE (Nifty / Bank Nifty options &amp; equities)</>}
       />
       <div className="stack">
+        <Funds date={date} net={dayStats.net} costs={dayStats.costs + dayTrades.reduce((a, t) => a + t.slippage, 0)} />
         <Verdict day={cur} />
 
         <div className="grid cols-4">
@@ -133,7 +135,7 @@ export default function Overview() {
                     )}
                   </Panel>
 
-                  <Panel title="Scan throughput" sub="Symbols scanned per strategy cycle" actions={<Link className="link-btn" to={{ pathname: '/trading', search }}>Trading <ArrowRight size={12} style={{ verticalAlign: -2 }} /></Link>}>
+                  <Panel title="Scan throughput" sub="Symbols scanned per strategy cycle" actions={<Link className="link-btn" to={{ pathname: '/trading', search }}>P&amp;L <ArrowRight size={12} style={{ verticalAlign: -2 }} /></Link>}>
                     {throughput.length === 0 ? (
                       <p className="muted">No scan cycles ran this session.</p>
                     ) : (
@@ -161,6 +163,39 @@ export default function Overview() {
         </DayGate>
       </div>
     </>
+  )
+}
+
+// Mirrors Genie's app/config.py defaults; not read from a broker.
+const TOTAL_CAPITAL = 150_000
+const TRADING_PCT = 0.7
+
+function Funds({ date, net, costs }: { date: string; net: number; costs: number }) {
+  const { day } = useDay(date)
+  const book = useLiveBook()
+  const sizing = day?.riskSizing.at(-1)
+  const tradingCap = sizing?.capital ?? TOTAL_CAPITAL * TRADING_PCT
+  const deployed = sizing?.openRisk ?? null
+  const cells: { label: string; value: string; note: string; tone?: 'pos' | 'neg' | 'flat' }[] = [
+    { label: 'Capital', value: fmtINR(TOTAL_CAPITAL), note: `${Math.round(TRADING_PCT * 100)}% tradable · ${fmtINR(TOTAL_CAPITAL * TRADING_PCT)}` },
+    { label: 'Risk deployed', value: deployed == null ? '—' : fmtINR(deployed), note: sizing ? `limit ${fmtINR(sizing.riskLimit)}` : 'no sizing record' },
+    { label: 'Available (est.)', value: deployed == null ? '—' : fmtINR(tradingCap - deployed), note: 'tradable capital − risk deployed' },
+    { label: 'Realised today', value: fmtINR(net, { sign: true }), note: `charges ${fmtINR(costs)}`, tone: pnlTone(net) },
+    { label: 'Unrealised (live)', value: book.state === 'live' ? fmtINR(book.totals.open, { sign: true }) : '—', note: book.state === 'live' ? `${book.totals.openCount} open` : 'connect the live API', tone: book.state === 'live' ? pnlTone(book.totals.open) : 'flat' },
+  ]
+  return (
+    <section aria-label="Funds and P&L">
+      <div className="pnlstrip" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+        {cells.map((c) => (
+          <div className="pnlstrip__cell" key={c.label}>
+            <span className="pnlstrip__label">{c.label}</span>
+            <span className={clsx('pnlstrip__value num', c.tone)}>{c.value}</span>
+            <span className="pnlstrip__note">{c.note}</span>
+          </div>
+        ))}
+      </div>
+      <p className="muted tiny" style={{ margin: '6px 2px 0' }}>Derived from Genie config and logs, not broker margin.</p>
+    </section>
   )
 }
 

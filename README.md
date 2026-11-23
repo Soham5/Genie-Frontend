@@ -8,8 +8,10 @@ Quant-console dashboard for the [Genie](../Genie) paper-trading system. A static
 
 | Page | What it shows |
 | --- | --- |
-| Overview | KPIs, intraday equity, cycle throughput, component health |
-| Trading | Open positions, blotter, cost waterfall, R-multiples, exit reasons |
+| Dashboard | Funds strip, KPIs, equity curve, cycle throughput, component health |
+| Orders | Order book (executed / rejected) built from entry and exit events |
+| Positions | Day / Net positions; F&O combos expand into legs with a payoff-at-expiry chart |
+| P&L | Realised P&L, blotter, cost waterfall, R-multiples, exit reasons |
 | Strategies | Per-strategy performance and catalog |
 | Market | VIX, put/call ratio, chain snapshots, NSE reliability |
 | Risk Gate | 7-stage control pipeline, blocks, kill-switch/reconciliation history |
@@ -49,5 +51,8 @@ For a local build with a different base path: `$env:VITE_BASE="/"; npm run build
 
 - **The site is public.** The data builder strips broker client IDs, raw positions, request IDs, IPs and stack traces (only the last line is kept). Review `public/data` before publishing.
 - **Backtests are synthetic.** The report's Sharpe > 300 / 100% win-rate results are generator artefacts; the UI flags them as implausible or thin-sample.
-- **No live marks.** Logs have no quotes, so unrealised P&L is not shown. "Open" means entered on the selected date and not exited; earlier entries without an exit are listed as unclosed.
-- **Optional live API.** Settings can probe `<base>/api/v1/health/live`. GitHub Pages is HTTPS, so the API must also be HTTPS with CORS enabled; plain `http://` is blocked as mixed content.
+- **Two data modes.** *Snapshot* (default) uses the log export: no quotes, so no live LTP or unrealised P&L. *Live* polls the Genie API every 4s and shows real leg LTPs and MTM P&L.
+- **Leg provenance.** Logs record only truncated order metadata, so snapshot legs are tagged `logged`, `derived` (inferred from the strategy shape) or `not logged` (unknown strike). The payoff chart appears only when every leg has a strike and price; live legs are always complete.
+- **Live API setup.** In Settings enter the API base URL and a **read-only** key, then Save. Calls use `GET /api/v1/papertrade/pnl`. The key is kept in sessionStorage unless "remember" is ticked (localStorage). GitHub Pages is HTTPS, so the API must be HTTPS with `CORS_ALLOW_ORIGINS` including your Pages origin; plain `http://` is blocked as mixed content.
+- **Read-only.** There are no order-entry or control actions; the algo places every order.
+- **Funds strip is derived** from Genie config and logs, not broker margin.

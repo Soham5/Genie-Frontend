@@ -23,6 +23,12 @@ export function DayGate({ children }: { children: (day: DayDetail, date: string)
 
 export const LEVEL_TONE: Record<Level, 'muted' | 'warn' | 'neg'> = { info: 'muted', warning: 'warn', error: 'neg', critical: 'neg' }
 
+/** Kite-style BUY (blue) / SELL (red) chip. */
+export function SideChip({ side }: { side: string | null | undefined }) {
+  if (side !== 'BUY' && side !== 'SELL') return <span className="muted">—</span>
+  return <span className={`side side--${side.toLowerCase()}`}>{side}</span>
+}
+
 export function LevelIcon({ level }: { level: Level }) {
   if (level === 'critical') return <XOctagon size={14} color="var(--neg)" aria-label="critical" />
   if (level === 'error') return <AlertOctagon size={14} color="var(--neg)" aria-label="error" />

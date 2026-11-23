@@ -264,14 +264,12 @@ kbd {
   top: 0;
   z-index: 1;
   text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--muted);
   background: var(--surface);
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-strong);
   white-space: nowrap;
   user-select: none;
 }
@@ -294,7 +292,58 @@ kbd {
 .tbl tbody tr:last-child td { border-bottom: 0; }
 .tbl tr.clickable { cursor: pointer; }
 .tbl tr.expanded td { background: var(--surface-2); }
-.tbl--dense td { padding: 5px 12px; }
+.tbl--dense td { padding: 6px 12px; }
+.tbl tfoot td { border-top: 1px solid var(--border-strong); border-bottom: 0; background: var(--surface-2); padding: 9px 12px; position: sticky; bottom: 0; }
+.tbl tr.is-closed td { color: var(--muted); }
+
+/* ---------- Broker-style bits ---------- */
+.side {
+  display: inline-block;
+  min-width: 38px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: #fff;
+}
+
+.side--buy { background: var(--buy); }
+.side--sell { background: var(--sell); }
+
+.tiny { font-size: 11px; line-height: 1.3; }
+
+.instr { display: flex; flex-direction: column; gap: 3px; }
+.instr__name { font-weight: 600; }
+.instr__meta { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.pnlstrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.pnlstrip__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 18px;
+  min-width: 0;
+}
+
+.pnlstrip__cell + .pnlstrip__cell { border-left: 1px solid var(--border); }
+.pnlstrip__label { font-size: 12px; color: var(--muted); }
+.pnlstrip__value { font-size: 20px; font-weight: 600; }
+.pnlstrip__value--lg { font-size: 24px; }
+.pnlstrip__note { font-size: 11px; color: var(--faint); }
+
+@media (max-width: 560px) {
+  .pnlstrip { grid-template-columns: minmax(0, 1fr); }
+  .pnlstrip__cell + .pnlstrip__cell { border-left: 0; border-top: 1px solid var(--border); }
+}
 
 /* ---------- Callout / empty ---------- */
 .callout {

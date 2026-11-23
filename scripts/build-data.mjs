@@ -132,8 +132,87 @@ const emptyDay = (date) => ({
   modes: new Set(),
 })
 
+const LOT_SIZES = { NIFTY: 65, BANKNIFTY: 30, FINNIFTY: 60, MIDCPNIFTY: 120 }
+const MONTHS = { JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06', JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12' }
+const OPT_SYMBOL = /^([A-Z]+?)(\d{2})([A-Z]{3})(\d{2})(\d+)(CE|PE)$/
+const LEG_RE = /"(BUY|SELL)", "option_type": "(CE|PE)", "strike": (\d+), "lot_size": (\d+), "price": ([\d.]+), "symbol": "([A-Z0-9]+)"/g
+// SQLAlchemy echoes the INSERT of an opened F&O position: (UUID, strategy, symbol, side, qty, ..., datetime(...), date, '<meta json>').
+const SQL_POSITION = /UUID\('[^']+'\), '([^']+)', '([^']+)', '(?:BUY|SELL)', (\d+), [\d.]+,.*?datetime\.datetime\((\d+), (\d+), (\d+), (\d+), (\d+), (\d+)/
+
+/** Pulls whatever leg detail survives SQLAlchemy's parameter truncation (long meta values lose their middle). */
+function parseSqlPosition(ev) {
+  if (!ev.includes('option_type')) return null
+  const m = ev.match(SQL_POSITION)
+  if (!m) return null
+  const [, strategy, symbol, qty, y, mo, d, h, mi, s] = m
+  const legs = [...ev.matchAll(LEG_RE)].map((x) => {
+    const sym = OPT_SYMBOL.exec(x[6])
+    return {
+      action: x[1], type: x[2], strike: Number(x[3]), lotSize: Number(x[4]), price: Number(x[5]), symbol: x[6],
+      underlying: sym?.[1] ?? null,
+      expiry: sym ? `20${sym[4]}-${MONTHS[sym[3]] ?? '01'}-${sym[2]}` : null,
+    }
+  })
+  const credit = ev.match(/"net_credit": ([\d.]+)/)
+  const pad = (n) => String(n).padStart(2, '0')
+  return {
+    strategy, symbol, qty: Number(qty), date: `${y}-${pad(mo)}-${pad(d)}`, sec: Number(h) * 3600 + Number(mi) * 60 + Number(s),
+    legs, netCredit: credit ? Number(credit[1]) : null,
+  }
+}
+
+const flip = (a) => (a === 'BUY' ? 'SELL' : 'BUY')
+const swapType = (sym, from, to) => (sym ? sym.replace(new RegExp(`${from}$`), to) : null)
+
+/**
+ * Builds the F&O leg table for an entry. Every leg carries `source`:
+ *   logged  – printed in full in the log
+ *   derived – recomputed from the logged net credit and the strategy's structure
+ *   unknown – the structure says the leg exists but its strike/price was truncated out of the log
+ */
+function buildLegs(entry, sql) {
+  const sym = entry.symbol
+  const qty = entry.qty
+  const logged = sql?.legs ?? []
+  const first = logged[0]
+  const underlying = first?.underlying ?? (/^(BANKNIFTY|NIFTY|FINNIFTY|MIDCPNIFTY)/.exec(sym)?.[1] ?? null)
+  if (!underlying && !logged.length) return null
+  const lotSize = first?.lotSize ?? LOT_SIZES[underlying] ?? 1
+  const expiry = first?.expiry ?? null
+  const credit = sql?.netCredit ?? null
+  const mk = (no, action, type, strike, price, symbol, source) => ({ no, action, type, strike, price, symbol, qty, lots: Math.round((qty / lotSize) * 100) / 100, source })
+  const known = (l, no, source = 'logged') => mk(no, l.action, l.type, l.strike, l.price, l.symbol, source)
+  const r2 = (n) => Math.round(n * 100) / 100
+  let legs = []
+
+  if (/STRADDLE/.test(sym) && logged.length === 1 && credit != null) {
+    const pe = logged[0]
+    const ce = { ...pe, type: pe.type === 'PE' ? 'CE' : 'PE', price: r2(credit - pe.price), symbol: swapType(pe.symbol, pe.type, pe.type === 'PE' ? 'CE' : 'PE') }
+    legs = pe.type === 'PE' ? [known(ce, 1, 'derived'), known(pe, 2)] : [known(pe, 1), known(ce, 2, 'derived')]
+  } else if (/CREDIT_SPREAD/.test(sym) && logged.length === 1 && credit != null) {
+    const hedge = logged[0]
+    legs = [mk(1, flip(hedge.action), hedge.type, null, r2(credit + hedge.price), null, 'derived'), known(hedge, 2)]
+  } else if (/IRON_CONDOR/.test(sym)) {
+    const byNo = [mk(1, 'SELL', 'CE', null, null, null, 'unknown'), mk(2, 'BUY', 'CE', null, null, null, 'unknown'), mk(3, 'SELL', 'PE', null, null, null, 'unknown'), mk(4, 'BUY', 'PE', null, null, null, 'unknown')]
+    for (const l of logged) {
+      const slot = byNo.findIndex((x) => x.action === l.action && x.type === l.type && x.source === 'unknown')
+      if (slot >= 0) byNo[slot] = known(l, slot + 1)
+    }
+    legs = byNo
+  } else if (logged.length) {
+    legs = logged.map((l, i) => known(l, i + 1))
+  } else if (/^(BANKNIFTY|NIFTY)_(CE|PE)$/.test(sym)) {
+    // Single-leg option buy (range-breakout scalp): the strike is chosen at fill time and not logged.
+    legs = [mk(1, entry.action, sym.slice(-2), null, entry.entryPrice, null, 'derived')]
+  } else {
+    return null
+  }
+  return { underlying, expiry, netCredit: credit, lotSize, legs }
+}
+
 function parseLogs() {
   const days = new Map()
+  const sqlPositions = [] // F&O position inserts, matched to entries once the file is read
   const get = (date) => days.get(date) ?? days.set(date, emptyDay(date)).get(date)
   const pendingEntries = [] // chronological across files, matched FIFO on exit
   const files = fs.readdirSync(logsDir).filter((f) => f.endsWith('.jsonl')).sort()
@@ -154,7 +233,11 @@ function parseLogs() {
       day.firstTs ??= t
       day.lastTs = t
 
-      if (logger.startsWith('sqlalchemy')) continue
+      if (logger.startsWith('sqlalchemy')) {
+        const p = parseSqlPosition(ev)
+        if (p) sqlPositions.push(p)
+        continue
+      }
       if (logger.startsWith('apscheduler')) {
         const m = ev.match(/^Running job "(\w+)/)
         if (m) day.scheduler[m[1]] = (day.scheduler[m[1]] ?? 0) + 1
@@ -306,6 +389,17 @@ function parseLogs() {
       reason: null, gross: null, brokerage: null, stt: null, exchCharges: null, gst: null, slippage: null, net: null,
       circuitState: null, status: 'open',
     })
+  }
+  // Attach F&O leg tables (legs, underlying, expiry, net credit) to every trade with a recoverable structure.
+  const toSec = (t) => { const [h, m, s] = t.split(':').map(Number); return h * 3600 + m * 60 + s }
+  for (const day of days.values()) {
+    for (const tr of day.trades) {
+      if (!tr.entryDate || !tr.entryT || tr.exchange !== 'NFO') continue
+      const es = toSec(tr.entryT)
+      const sql = sqlPositions.find((p) => p.strategy === tr.strategy && p.symbol === tr.symbol && p.date === tr.entryDate && Math.abs(p.sec - es) <= 5)
+      const built = buildLegs({ symbol: tr.symbol, qty: tr.qty, action: tr.action, entryPrice: tr.entryPrice }, sql)
+      if (built) Object.assign(tr, built)
+    }
   }
   return days
 }

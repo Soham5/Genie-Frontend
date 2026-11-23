@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Download } from 'lucide-react'
 import { useSelectedDate, useStore } from '@/data/store'
-import { Badge, Callout, Empty, PageHead, Panel, Seg } from '@/components/ui/Panel'
+import { Badge, Callout, PageHead, Panel, Seg } from '@/components/ui/Panel'
 import { Stat } from '@/components/ui/Stat'
 import { DataTable, type Column } from '@/components/ui/DataTable'
 import { AXIS, ChartTooltip, GRID } from '@/components/charts/chartKit'
@@ -15,8 +16,9 @@ type Scope = 'session' | 'all'
 type Lane = 'all' | 'managed' | 'research'
 
 export default function Trading() {
-  const { trades, closedTrades } = useStore()
+  const { closedTrades } = useStore()
   const [date] = useSelectedDate()
+  const { search } = useLocation()
   const [scope, setScope] = useState<Scope>('session')
   const [lane, setLane] = useState<Lane>('all')
 
@@ -25,16 +27,6 @@ export default function Trading() {
     () => closedTrades.filter((t) => laneOk(t) && (scope === 'all' || t.exitDate === date)),
     [closedTrades, scope, date, lane], // eslint-disable-line react-hooks/exhaustive-deps
   )
-  const open = useMemo(
-    () => trades.filter((t) => laneOk(t) && t.entryDate === date && (t.status === 'open' || (t.exitDate != null && t.exitDate > date))),
-    [trades, date, lane], // eslint-disable-line react-hooks/exhaustive-deps
-  )
-  const orphans = useMemo(
-    () => trades.filter((t) => laneOk(t) && t.status === 'open' && t.entryDate != null && t.entryDate < date),
-    [trades, date, lane], // eslint-disable-line react-hooks/exhaustive-deps
-  )
-  const [showOrphans, setShowOrphans] = useState(false)
-  const openRows = showOrphans ? [...orphans, ...open] : open
   const stats = useMemo(() => computeStats(scoped), [scoped])
 
   const columns: Column<ClosedTrade>[] = [
@@ -55,8 +47,8 @@ export default function Trading() {
   return (
     <>
       <PageHead
-        title="Trading"
-        sub="Positions, blotter and trade analytics. All P&L is realised and net of modelled costs."
+        title="P&L"
+        sub="Realised trade P&L and analytics, net of modelled costs."
         actions={
           <>
             <Seg<Lane> label="Lane" value={lane} onChange={setLane} options={[{ value: 'all', label: 'All lanes' }, { value: 'managed', label: 'Managed' }, { value: 'research', label: 'Research' }]} />
@@ -74,41 +66,9 @@ export default function Trading() {
           <Stat label="Avg R" value={stats.avgR == null ? '—' : `${fmtNum(stats.avgR)}R`} tone={pnlTone(stats.avgR)} foot={`max DD ${fmtINR(stats.maxDrawdown)}`} help="Mean R-multiple over trades with recorded entry risk." />
         </div>
 
-        <Panel
-          title="Open positions"
-          sub={`Entered ${fmtDate(date, 'long')}, still open at close · ${open.length} open`}
-          help="Fill, stop and target come from the entry event. The logs carry no live quotes, so open P&L is intentionally not estimated."
-          actions={orphans.length > 0 && <button className="btn btn--sm" onClick={() => setShowOrphans((s) => !s)}>{showOrphans ? 'Hide' : 'Show'} {orphans.length} earlier unclosed</button>}
-        >
-          {orphans.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <Callout tone="info">
-                {orphans.length} entries from earlier sessions never logged an exit (typically paper state lost on a restart or flagged by reconciliation). They are excluded from realised P&amp;L.
-              </Callout>
-            </div>
-          )}
-          {openRows.length === 0 ? (
-            <Empty title="Flat">No positions opened this session remain open.</Empty>
-          ) : (
-            <DataTable
-              dense
-              rows={openRows}
-              rowKey={(t) => t.id}
-              columns={[
-                { key: 's', header: 'Strategy', cell: (t) => prettyStrategy(t.strategy) },
-                { key: 'sym', header: 'Symbol', cell: (t) => <span className="mono">{t.symbol}</span> },
-                { key: 'side', header: 'Side', cell: (t) => <Badge tone={t.action === 'BUY' ? 'pos' : 'neg'}>{t.action ?? '—'}</Badge> },
-                { key: 'qty', header: 'Qty', align: 'r', cell: (t) => <span className="num">{t.qty}</span> },
-                { key: 'in', header: 'Opened', cell: (t) => <span className="num">{t.entryDate ? fmtDate(t.entryDate) : '—'} {t.entryT?.slice(0, 5)}</span> },
-                { key: 'ep', header: 'Entry', align: 'r', cell: (t) => <span className="num">{fmtNum(t.entryPrice)}</span> },
-                { key: 'sl', header: 'Stop', align: 'r', cell: (t) => <span className="num neg">{fmtNum(t.stopLoss)}</span> },
-                { key: 'tp', header: 'Target', align: 'r', cell: (t) => <span className="num pos">{fmtNum(t.target)}</span> },
-                { key: 'ladder', header: <span data-tip="Stop on the left, target on the right; the cyan mark is the fill">Stop ↔ Target</span>, cell: (t) => <Ladder t={t} /> },
-                { key: 'risk', header: 'Risk', align: 'r', cell: (t) => <span className="num">{fmtINR(t.initialRisk)}</span> },
-              ]}
-            />
-          )}
-        </Panel>
+        <Callout tone="info">
+          Realised P&amp;L only. Open positions, F&amp;O legs and mark-to-market live on the <Link className="link-btn" to={{ pathname: '/positions', search }}>Positions</Link> page.
+        </Callout>
 
         <Panel
           title="Trade blotter"
@@ -131,16 +91,6 @@ export default function Trading() {
         <Analytics trades={scoped} />
       </div>
     </>
-  )
-}
-
-function Ladder({ t }: { t: Trade }) {
-  if (t.stopLoss == null || t.target == null || t.stopLoss === t.target) return <span className="muted">—</span>
-  const pct = Math.min(100, Math.max(0, ((t.entryPrice - t.stopLoss) / (t.target - t.stopLoss)) * 100))
-  return (
-    <div className="ladder" role="img" aria-label={`Entry ${fmtNum(t.entryPrice)} between stop ${fmtNum(t.stopLoss)} and target ${fmtNum(t.target)}`}>
-      <span className="ladder__mark ladder__entry" style={{ left: `calc(${pct}% - 1px)` }} />
-    </div>
   )
 }
 

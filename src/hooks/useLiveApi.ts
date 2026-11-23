@@ -1,17 +1,40 @@
 import { useEffect, useState } from 'react'
 
 const KEY = 'genie-api-base'
+const TOKEN = 'genie-api-key'
 const EVENT = 'genie-api-change'
 
 export type LiveState = 'off' | 'checking' | 'up' | 'down'
 
 export const getApiBase = () => localStorage.getItem(KEY) ?? ''
+export const getApiKey = () => sessionStorage.getItem(TOKEN) ?? localStorage.getItem(TOKEN) ?? ''
+export const isKeyRemembered = () => localStorage.getItem(TOKEN) != null
 
 export function setApiBase(value: string) {
   const v = value.trim().replace(/\/+$/, '')
   if (v) localStorage.setItem(KEY, v)
   else localStorage.removeItem(KEY)
   window.dispatchEvent(new Event(EVENT))
+}
+
+/** Keys stay in the tab (sessionStorage) unless the user opts to remember them on this device. */
+export function setApiKey(value: string, remember: boolean) {
+  const v = value.trim()
+  sessionStorage.removeItem(TOKEN)
+  localStorage.removeItem(TOKEN)
+  if (v) (remember ? localStorage : sessionStorage).setItem(TOKEN, v)
+  window.dispatchEvent(new Event(EVENT))
+}
+
+export function authHeaders(): Record<string, string> {
+  const k = getApiKey()
+  if (!k) return {}
+  return k.split('.').length === 3 ? { Authorization: `Bearer ${k}` } : { 'X-API-Key': k }
+}
+
+export const onApiChange = (fn: () => void) => {
+  window.addEventListener(EVENT, fn)
+  return () => window.removeEventListener(EVENT, fn)
 }
 
 /**
