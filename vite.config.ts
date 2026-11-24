@@ -2,8 +2,9 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
 
-// GitHub Pages serves project sites from /<repo>/. Override with VITE_BASE when the repo name differs.
-const base = process.env.VITE_BASE ?? '/Genie-Frontend/'
+// The site is served from the custom domain in public/CNAME, i.e. the root path.
+// Set VITE_BASE=/<repo>/ if you ever deploy without the custom domain.
+const base = process.env.VITE_BASE ?? '/'
 
 export default defineConfig({
   base,

@@ -41,11 +41,11 @@ Commit the regenerated `public/data` and push.
 
 ## Deploy to GitHub Pages
 
-1. Push to `main` in a repo named `Genie-Frontend` (or any name; the workflow sets `VITE_BASE` automatically).
-2. Repo **Settings → Pages → Source: GitHub Actions**.
+1. Push to `main`. The site is served from the custom domain in [public/CNAME](public/CNAME) (`genie.sohamsur.com`), so assets use base `/`.
+2. Repo **Settings → Pages → Source: GitHub Actions**, custom domain `genie.sohamsur.com` (enable Enforce HTTPS once the certificate is issued).
 3. [.github/workflows/deploy.yml](.github/workflows/deploy.yml) builds and publishes. Routing uses `HashRouter`, so deep links work without 404 rewrites.
 
-For a local build with a different base path: `$env:VITE_BASE="/"; npm run build`.
+To deploy under `https://<user>.github.io/<repo>/` instead (no custom domain), remove `public/CNAME` and build with `$env:VITE_BASE="/<repo>/"`.
 
 ## Things to know
 
