@@ -1,160 +1,99 @@
-import { useMemo } from 'react'
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { SCHEDULER_JOBS } from '@/data/catalog'
-import { useStore } from '@/data/store'
-import { Badge, Empty, PageHead, Panel } from '@/components/ui/Panel'
-import { DayGate, LEVEL_TONE } from '@/components/ui/bits'
-import { DataTable } from '@/components/ui/DataTable'
-import { AXIS, COLORS, ChartTooltip, GRID, Legend } from '@/components/charts/chartKit'
-import { fmtCount, fmtDate, prettyEvent } from '@/lib/format'
-import type { DayDetail } from '@/types'
+import type { ReactNode } from 'react'
+import { useApiState } from '@/api/ApiProvider'
+import type { RunnerStatus } from '@/api/types'
+import { useApi } from '@/api/useApi'
+import { Badge, Callout, PageHead, Panel, Skeleton } from '@/components/ui/Panel'
+import { Stat } from '@/components/ui/Stat'
+import { DataTable, type Column } from '@/components/ui/DataTable'
+import { ApiNote, clock, fmtRel, fmtStamp, KvList, Load, RefreshButton } from './ops/shared'
 
-export default function System() {
+interface SchedulerStatus { running: boolean; jobs: { id: string; next_run_time: string | null }[] }
+
+const flat = (v: unknown): ReactNode => {
+  if (v == null) return '—'
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No'
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+const pretty = (k: string) => k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+function RunnerPanel({ title, sub, res }: { title: string; sub: string; res: ReturnType<typeof useApi<RunnerStatus>> }) {
   return (
-    <>
-      <PageHead title="System Health" sub="Subsystem activity, connectivity, scheduled jobs and the issues that need attention" />
-      <DayGate>{(day, date) => <SystemBody day={day} date={date} />}</DayGate>
-    </>
+    <Panel title={title} sub={sub} actions={res.data ? <Badge tone={res.data.running ? 'pos' : 'muted'} dot>{res.data.running ? 'Running' : 'Stopped'}</Badge> : undefined}>
+      <Load res={res} what={title.toLowerCase()}>
+        {(r) => (
+          <>
+            <KvList
+              rows={[
+                ['Scan interval', `${r.interval_sec}s`],
+                ['Cycle in progress', r.cycle_in_progress ? 'Yes' : 'No'],
+                ['Last cycle', r.last_cycle_at ? `${fmtStamp(r.last_cycle_at)} (${fmtRel(r.last_cycle_at) || '—'})` : 'never'],
+                ...(r.risk_stack_enabled != null ? ([['Risk stack', r.risk_stack_enabled ? 'On' : 'Off']] as [string, ReactNode][]) : []),
+                ...Object.entries(r.last_cycle_stats ?? {}).map(([k, v]) => [`Cycle · ${pretty(k)}`, flat(v)] as [string, ReactNode]),
+              ]}
+            />
+            {r.last_cycle_error && <Callout tone="neg" title="Last cycle error.">{r.last_cycle_error}</Callout>}
+          </>
+        )}
+      </Load>
+    </Panel>
   )
 }
 
-function SystemBody({ day, date }: { day: DayDetail; date: string }) {
-  const { index } = useStore()
-  const comps = Object.entries(day.components).sort((a, b) => b[1].errors - a[1].errors || b[1].warnings - a[1].warnings)
-  const trend = useMemo(() => index.days.filter((d) => d.hasSession).map((d) => ({ date: d.date, errors: d.errors, warnings: d.warnings })), [index.days])
-  const jobs = Object.entries(day.scheduler).sort((a, b) => b[1] - a[1])
-  const incidents = index.incidents.filter((i) => i.kind === 'infrastructure' || i.date === date).slice(0, 50)
+export default function System() {
+  const { status, base, health, kill, error, refresh } = useApiState()
+  const enabled = status === 'online'
+  const sched = useApi<SchedulerStatus>('/health/scheduler', { poll: 30000, enabled })
+  const ws = useApi<{ state: string }>('/health/websocket', { poll: 15000, enabled })
+  const paper = useApi<RunnerStatus>('/papertrade/runner', { poll: 10000, enabled })
+  const live = useApi<RunnerStatus>('/live/runner', { poll: 15000, enabled })
 
-  const wsHealthy = day.ws.heartbeatTimeouts === 0 && day.ws.errors === 0
-  const wsStalled = day.ws.stallStarted > day.ws.stallRecovered
+  const wsState = ws.data?.state ?? health?.websocket_state ?? null
+  const schedData = sched.data ?? (health?.scheduler && typeof health.scheduler === 'object' && 'jobs' in health.scheduler ? (health.scheduler as SchedulerStatus) : undefined)
+  const checks: [string, boolean | null, string][] = [
+    ['Broker session', health ? health.broker_connected : null, health?.broker_connected ? 'connected' : 'not connected'],
+    ['Market-data websocket', wsState ? /connected/i.test(wsState) && !/dis/i.test(wsState) : null, wsState ?? 'unknown'],
+    ['Scheduler', schedData ? schedData.running : null, schedData ? (schedData.running ? `${schedData.jobs.length} jobs scheduled` : 'not running') : 'unknown'],
+    ['Kill switch clear', kill ? !kill.active : null, kill?.active ? `active${kill.reason ? ` · ${kill.reason}` : ''}` : 'off'],
+  ]
+  const allOk = checks.every(([, ok]) => ok === true)
+
+  const jobCols: Column<SchedulerStatus['jobs'][number]>[] = [
+    { key: 'id', header: 'Job', sort: (j) => j.id, cell: (j) => <span className="mono">{j.id}</span> },
+    { key: 'next', header: 'Next run', sort: (j) => j.next_run_time ?? '', cell: (j) => <span className="num">{fmtStamp(j.next_run_time)}</span> },
+    { key: 'in', header: 'In', align: 'r', cell: (j) => <span className="muted">{fmtRel(j.next_run_time) || '—'}</span> },
+  ]
 
   return (
-    <div className="stack">
-      <div className="grid cols-4">
-        {comps.slice(0, 8).map(([name, c]) => (
-          <div className="stat" key={name} style={{ gap: 4 }}>
-            <div className="stat__label">{name}</div>
-            <div className="row" style={{ gap: 8 }}>
-              <span className={`dot ${c.errors ? 'dot--neg' : c.warnings ? 'dot--warn' : 'dot--pos'}`} />
-              <span className="stat__value num" style={{ fontSize: 18 }}>{c.errors ? 'Errors' : c.warnings ? 'Warnings' : 'Healthy'}</span>
-            </div>
-            <div className="stat__foot num">{fmtCount(c.events)} events · {c.warnings} warn · {c.errors} err</div>
-          </div>
-        ))}
-      </div>
+    <>
+      <PageHead title="System" sub="Service health, scheduler and algo runner status from the Genie API." actions={<RefreshButton onClick={() => { refresh(); sched.refresh(); ws.refresh(); paper.refresh(); live.refresh() }} />} />
+      <div className="stack">
+        {status === 'offline' && <Callout tone="neg" title="API unreachable.">{error ?? 'The health check is failing.'} Showing the last known values.</Callout>}
 
-      <div className="grid cols-3">
-        <Panel title="WebSocket feed" sub="Market-data stream" actions={<Badge tone={wsStalled ? 'neg' : wsHealthy ? 'pos' : 'warn'} dot>{wsStalled ? 'Stalled' : wsHealthy ? 'Stable' : 'Unstable'}</Badge>}>
-          <dl className="kv">
-            <dt>Connections</dt><dd className="num">{fmtCount(day.ws.connected)}</dd>
-            <dt>Reconnects</dt><dd className="num">{fmtCount(day.ws.reconnects)}</dd>
-            <dt>Heartbeat timeouts</dt><dd className={`num ${day.ws.heartbeatTimeouts ? 'neg' : ''}`}>{fmtCount(day.ws.heartbeatTimeouts)}</dd>
-            <dt>Stalls (start / recovered)</dt><dd className="num">{day.ws.stallStarted} / {day.ws.stallRecovered}</dd>
-            <dt>Errors</dt><dd className="num">{fmtCount(day.ws.errors)}</dd>
-          </dl>
+        <div className="grid cols-4">
+          <Stat label="API" value={status === 'online' ? 'Online' : status} tone={status === 'online' ? 'pos' : status === 'offline' ? 'neg' : undefined} foot={base || 'no URL'} />
+          <Stat label="Broker" value={health ? (health.broker_connected ? 'Connected' : 'Disconnected') : '—'} tone={health ? (health.broker_connected ? 'pos' : 'neg') : undefined} foot={health?.last_token_refresh ? `token ${fmtStamp(health.last_token_refresh)}` : 'no token refresh'} />
+          <Stat label="WebSocket" value={wsState ?? '—'} tone={wsState ? (/^connected$/i.test(wsState) ? 'pos' : 'neg') : undefined} foot={`fills ingested ${health?.broker_fills_ingested_total ?? '—'}`} />
+          <Stat label="Scheduler" value={schedData ? (schedData.running ? 'Running' : 'Stopped') : '—'} tone={schedData ? (schedData.running ? 'pos' : 'neg') : undefined} foot={schedData ? `${schedData.jobs.length} jobs` : undefined} />
+        </div>
+
+        <Panel title="Readiness" sub="Derived from /health, /health/websocket and /health/scheduler" actions={<Badge tone={allOk ? 'pos' : 'warn'} dot>{allOk ? 'All systems go' : 'Attention needed'}</Badge>}>
+          {!health && status !== 'offline' ? <Skeleton height={96} /> : (
+            <KvList rows={checks.map(([name, ok, text]) => [name, <span key={name}><Badge tone={ok == null ? 'muted' : ok ? 'pos' : 'neg'} dot>{ok == null ? 'unknown' : ok ? 'OK' : 'FAIL'}</Badge> <span className="muted">{text}</span></span>])} />
+          )}
         </Panel>
-        <Panel title="Broker (Angel One)" sub="Order & candle APIs">
-          <dl className="kv">
-            <dt>Sessions</dt><dd className="num">{fmtCount(day.broker.sessions)}</dd>
-            <dt>Fill-poll failures</dt><dd className={`num ${day.broker.fillPollFailures ? 'neg' : ''}`}>{fmtCount(day.broker.fillPollFailures)}</dd>
-            <dt>Empty candle fetches</dt><dd className="num">{fmtCount(day.broker.candleFetchEmpty)}</dd>
-            <dt>Candle circuits opened</dt><dd className="num">{fmtCount(day.broker.candleCircuitOpened)}</dd>
-            <dt>Rate limited</dt><dd className="num">{fmtCount(day.broker.rateLimited)}</dd>
-          </dl>
-        </Panel>
-        <Panel title="Reconciliation" sub="Broker ↔ internal positions">
-          {day.recon.length === 0 ? <Empty title="No reconciliation runs" /> : (
-            <div className="stack" style={{ gap: 8 }}>
-              {day.recon.map((r, i) => (
-                <div key={`${r.t}-${i}`} className="row" style={{ alignItems: 'flex-start', fontSize: 12.5 }}>
-                  <span className={`dot ${r.ok ? 'dot--pos' : 'dot--neg'}`} style={{ marginTop: 5 }} />
-                  <div>
-                    <div><span className="num muted">{r.t.slice(0, 5)}</span> · {r.kind}</div>
-                    <div className="muted">{r.detail}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
+
+        <div className="grid cols-2">
+          <RunnerPanel title="Paper runner" sub="/papertrade/runner" res={paper} />
+          <RunnerPanel title="Live runner" sub="/live/runner" res={live} />
+        </div>
+
+        <Panel flush title="Scheduled jobs" sub={`/health/scheduler · updated ${clock(sched.updatedAt)}`}>
+          {sched.error && !sched.data ? <div style={{ padding: 12 }}><ApiNote error={sched.error} what="scheduler status" /></div> : !sched.data ? <Skeleton height={120} /> : (
+            <DataTable dense rows={sched.data.jobs} columns={jobCols} rowKey={(j) => j.id} initialSort={{ key: 'next', dir: 'asc' }} emptyTitle="No scheduled jobs" emptyHint={sched.data.running ? 'The scheduler is running with no jobs.' : 'The scheduler is not running.'} />
           )}
         </Panel>
       </div>
-
-      <Panel title="Errors & warnings per session" sub="Platform noise over time" actions={<Legend items={[{ label: 'Errors', color: COLORS.neg }, { label: 'Warnings', color: COLORS.warn }]} />}>
-        <div className="chart" style={{ height: 220 }} role="img" aria-label="Errors and warnings by session">
-          <ResponsiveContainer>
-            <BarChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid {...GRID} />
-              <XAxis dataKey="date" {...AXIS} tickFormatter={(d: string) => fmtDate(d)} minTickGap={28} />
-              <YAxis {...AXIS} width={40} />
-              <Tooltip cursor={{ fill: 'var(--surface-2)' }} content={<ChartTooltip format={(v) => fmtCount(v)} title={(l) => fmtDate(String(l), 'long')} />} />
-              <Bar dataKey="warnings" name="Warnings" stackId="a" fill="var(--warn)" isAnimationActive={false} />
-              <Bar dataKey="errors" name="Errors" stackId="a" fill="var(--neg)" isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Panel>
-
-      <div className="grid cols-2">
-        <Panel title="Issues this session" sub="Grouped by event" flush>
-          <DataTable
-            dense
-            maxHeight={360}
-            rows={day.issues}
-            rowKey={(i) => i.event}
-            initialSort={{ key: 'n', dir: 'desc' }}
-            emptyTitle="No warnings or errors"
-            columns={[
-              { key: 'lvl', header: 'Level', cell: (i) => <Badge tone={LEVEL_TONE[i.level]}>{i.level}</Badge> },
-              { key: 'e', header: 'Event', sort: (i) => i.event, wrap: true, cell: (i) => <><strong>{prettyEvent(i.event)}</strong><div className="muted" style={{ fontSize: 11.5 }}>{i.component} · {i.sample}</div></> },
-              { key: 'n', header: 'Count', align: 'r', sort: (i) => i.count, cell: (i) => <span className="num">{fmtCount(i.count)}</span> },
-            ]}
-          />
-        </Panel>
-
-        <Panel title="Top issues — all sessions" sub="Most frequent warnings/errors over the logged window" flush>
-          <DataTable
-            dense
-            maxHeight={360}
-            rows={index.issueTotals.slice(0, 25)}
-            rowKey={(i) => i.event}
-            columns={[
-              { key: 'lvl', header: 'Level', cell: (i) => <Badge tone={LEVEL_TONE[i.level]}>{i.level}</Badge> },
-              { key: 'e', header: 'Event', wrap: true, cell: (i) => <><strong>{prettyEvent(i.event)}</strong><div className="muted" style={{ fontSize: 11.5 }}>{i.component} · seen on {i.days} sessions</div></> },
-              { key: 'n', header: 'Count', align: 'r', cell: (i) => <span className="num">{fmtCount(i.count)}</span> },
-            ]}
-          />
-        </Panel>
-      </div>
-
-      <Panel title="Scheduled jobs" sub="APScheduler executions this session vs. expected cadence" flush>
-        <DataTable
-          dense
-          rows={jobs}
-          rowKey={([k]) => k}
-          emptyTitle="No scheduler activity"
-          columns={[
-            { key: 'j', header: 'Job', cell: ([k]) => <span className="mono">{k}</span> },
-            { key: 'p', header: 'Purpose', wrap: true, cell: ([k]) => <span className="muted">{SCHEDULER_JOBS[k]?.purpose ?? '—'}</span> },
-            { key: 'c', header: 'Schedule', cell: ([k]) => <span className="muted">{SCHEDULER_JOBS[k]?.cron ?? '—'}</span> },
-            { key: 'n', header: 'Runs', align: 'r', cell: ([, n]) => <span className="num">{fmtCount(n)}</span> },
-          ]}
-        />
-      </Panel>
-
-      <Panel title="Incident timeline" sub="Infrastructure incidents (all sessions) plus anything on the selected day" flush>
-        {incidents.length === 0 ? <Empty title="No incidents" /> : (
-          <div className="feed">
-            {incidents.map((i, n) => (
-              <div className="feed__row" key={`${i.date}-${i.t}-${n}`} style={{ gridTemplateColumns: '100px 100px 220px minmax(0,1fr)' }}>
-                <span className="num muted">{fmtDate(i.date)} {i.t.slice(0, 5)}</span>
-                <Badge tone={i.severity === 'critical' ? 'neg' : 'warn'}>{i.severity}</Badge>
-                <span className="feed__event">{i.title}</span>
-                <span className="feed__msg">{i.detail}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
-    </div>
+    </>
   )
 }

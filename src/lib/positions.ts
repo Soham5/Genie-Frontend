@@ -62,7 +62,7 @@ export function structureName(symbol: string): string | null {
   return STRUCTURES.find(([re]) => re.test(symbol))?.[1] ?? null
 }
 
-const isOptionTicker = (s: string) => /(CE|PE)$/.test(s)
+export const isOptionTicker = (s: string) => /[\d_](CE|PE)$/.test(s)
 
 export function instrumentLabel(symbol: string, underlying: string | null, expiry: string | null): string {
   const struct = structureName(symbol)
