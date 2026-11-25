@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ChevronDown, ChevronLeft, ChevronRight, Command, Moon, Sun } from 'lucide-react'
 import { ROUTES } from '@/routes'
-import { useDay, useSelectedDate, useStore } from '@/data/store'
+import { useApiState } from '@/api/ApiProvider'
+import { ConnectionForm } from '@/api/ConnectionForm'
+import { useSessionDate } from '@/api/session'
 import { useTheme } from '@/hooks/useTheme'
 import { useLiveBook } from '@/hooks/useLiveBook'
-import { fmtDate, fmtINR, fmtNum, pnlTone } from '@/lib/format'
+import { fmtDate, fmtINR, pnlTone } from '@/lib/format'
 import { Badge, Dot } from '@/components/ui/Panel'
 import { CommandPalette } from './CommandPalette'
 import { clsx } from '@/lib/clsx'
@@ -16,6 +18,9 @@ export function Shell() {
   const [theme, toggleTheme] = useTheme()
   const [palette, setPalette] = useState(false)
   const loc = useLocation()
+  const { status } = useApiState()
+  // Until the API is configured every page would be empty, so show the connect screen instead (Settings stays reachable).
+  const gated = status === 'unconfigured' && loc.pathname !== '/settings'
 
   useEffect(() => {
     window.scrollTo({ top: 0 })
@@ -40,7 +45,7 @@ export function Shell() {
       </header>
       <div className="main">
         <main className="page" id="content">
-          <Outlet />
+          {gated ? <ConnectScreen /> : <Outlet />}
         </main>
       </div>
       <CommandPalette open={palette} onClose={() => setPalette(false)} theme={theme} toggleTheme={toggleTheme} />
@@ -48,10 +53,22 @@ export function Shell() {
   )
 }
 
+function ConnectScreen() {
+  return (
+    <div className="boot" style={{ position: 'static', minHeight: '60vh' }}>
+      <div className="boot__card" style={{ textAlign: 'left', width: 'min(460px, 100%)' }}>
+        <div className="boot__logo">G</div>
+        <h1 style={{ margin: '12px 0 4px' }}>Connect to Genie</h1>
+        <p className="muted" style={{ marginTop: 0 }}>This console reads everything from your Genie API — enter its URL and a read-only key.</p>
+        <ConnectionForm />
+      </div>
+    </div>
+  )
+}
+
 function NavBar() {
   const { search } = useLocation()
-  const { index } = useStore()
-  const latest = index.days.find((d) => d.date === index.latestSession)
+  const { kill } = useApiState()
   const [more, setMore] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
   const loc = useLocation()
@@ -86,7 +103,7 @@ function NavBar() {
     <NavLink key={r.path} to={{ pathname: r.path, search }} end={r.path === '/'} className={({ isActive }) => clsx('nav__link', isActive && 'active')}>
       <r.icon size={15} />
       <span>{r.label}</span>
-      {r.path === '/system' && latest && latest.errors > 0 && <span className="nav__badge"><Badge tone="neg">{latest.errors}</Badge></span>}
+      {r.path === '/risk' && kill?.active && <span className="nav__badge"><Badge tone="neg">HALT</Badge></span>}
     </NavLink>
   )
   const secondary = ROUTES.filter((r) => !r.primary)
@@ -111,24 +128,18 @@ function NavBar() {
 }
 
 function Ticker({ theme, toggleTheme, onPalette }: { theme: string; toggleTheme: () => void; onPalette: () => void }) {
-  const { index } = useStore()
-  const [date, setDate] = useSelectedDate()
-  const { day } = useDay(date)
+  const { date, setDate, dates, today } = useSessionDate()
+  const { status, error, health, kill, runner } = useApiState()
   const book = useLiveBook()
-  const sessions = index.days.filter((d) => d.hasSession)
-  const other = index.days.filter((d) => !d.hasSession)
-  const cur = index.days.find((d) => d.date === date)
-  const pos = sessions.findIndex((d) => d.date === date)
-  const step = (dir: -1 | 1) => {
-    const next = sessions[pos + dir]
-    if (next) setDate(next.date)
-  }
-
-  const vix = cur?.vixClose ?? cur?.vixOpen ?? null
-  const pcr = day?.chain.filter((c) => c.index === 'NIFTY').at(-1)?.pcr ?? null
   const live = book.state === 'live'
-  const mtm = live ? book.totals.open : cur?.net ?? null
-  const apiTone = { off: undefined, connecting: 'warn', live: 'pos', error: 'neg' }[book.state] as 'warn' | 'pos' | 'neg' | undefined
+  const mtm = live ? book.totals.open : null
+  const statusLabel = { unconfigured: 'NOT CONNECTED', connecting: 'CONNECTING', online: 'LIVE', unauthorized: 'KEY REJECTED', offline: 'API DOWN' }[status]
+  const apiTone = { unconfigured: undefined, connecting: 'warn', online: 'pos', unauthorized: 'neg', offline: 'neg' }[status] as 'warn' | 'pos' | 'neg' | undefined
+  const idx = dates.indexOf(date)
+  const step = (dir: -1 | 1) => {
+    const next = dates[idx - dir]
+    if (next) setDate(next)
+  }
 
   return (
     <div className="ticker">
@@ -136,37 +147,30 @@ function Ticker({ theme, toggleTheme, onPalette }: { theme: string; toggleTheme:
         <div className="brand__mark">G</div>
         <span className="brand__name">Genie</span>
       </div>
-      <span className="ticker__chip hide-sm">INDIA VIX <strong>{fmtNum(vix)}</strong></span>
-      <span className="ticker__chip hide-sm">NIFTY PCR <strong>{fmtNum(pcr)}</strong></span>
-      {cur?.regime && <span className="ticker__chip hide-sm">REGIME <strong style={{ fontFamily: 'inherit' }}>{cur.regime}</strong></span>}
+      {health && <span className="ticker__chip hide-sm" title="Angel One broker session">BROKER <strong style={{ fontFamily: 'inherit' }}>{health.broker_connected ? 'UP' : 'DOWN'}</strong></span>}
+      {runner && <span className="ticker__chip hide-sm" title="Paper-trade runner">RUNNER <strong style={{ fontFamily: 'inherit' }}>{runner.running ? 'ON' : 'OFF'}</strong></span>}
+      {kill?.active && <span className="ticker__chip" title={kill.reason ?? 'Kill switch active'}><Badge tone="neg">KILL SWITCH</Badge></span>}
 
       <div className="topbar__spacer" />
 
-      <span className="ticker__chip hide-sm" title={live ? 'Streaming from the Genie API' : book.error ?? 'Static snapshot of the logs. Add an API URL in Settings for live data.'}>
-        <Dot tone={apiTone} pulse={book.state === 'connecting'} />
-        {live ? 'LIVE' : book.state === 'off' ? 'SNAPSHOT' : book.state === 'connecting' ? 'CONNECTING' : 'API DOWN'}
+      <span className="ticker__chip hide-sm" title={live ? 'Polling the Genie API' : error ?? book.error ?? 'Add the API URL and key in Settings.'}>
+        <Dot tone={apiTone} pulse={status === 'connecting'} />
+        {statusLabel}
       </span>
-      <span className="hide-xs"><Badge tone="outline">{(cur?.mode ?? 'paper').toUpperCase()}</Badge></span>
-      <div className="mtm" title={live ? 'Live unrealised P&L across open positions' : 'Net realised P&L for the selected session'}>
-        <span className="mtm__label">{live ? 'MTM' : 'Day net'}</span>
+      <span className="hide-xs"><Badge tone="outline">PAPER</Badge></span>
+      <div className="mtm" title="Live unrealised P&L across open positions">
+        <span className="mtm__label">MTM</span>
         <span className={clsx('mtm__value', pnlTone(mtm))}>{mtm == null ? '—' : fmtINR(mtm, { sign: true })}</span>
       </div>
 
       <div className="row" role="group" aria-label="Session selector">
-        <button className="btn btn--ghost btn--icon hide-xs" onClick={() => step(-1)} disabled={pos <= 0} aria-label="Previous session"><ChevronLeft size={16} /></button>
+        <button className="btn btn--ghost btn--icon hide-xs" onClick={() => step(-1)} disabled={idx < 0 || idx >= dates.length - 1} aria-label="Previous session"><ChevronLeft size={16} /></button>
         <select className="select" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Session date" style={{ minWidth: 120, maxWidth: 170 }}>
-          <optgroup label="Sessions">
-            {[...sessions].reverse().map((d) => (
-              <option key={d.date} value={d.date}>{fmtDate(d.date, 'long')}{d.date === index.latestSession ? ' · latest' : ''}</option>
-            ))}
-          </optgroup>
-          <optgroup label="No trading session">
-            {[...other].reverse().map((d) => (
-              <option key={d.date} value={d.date}>{fmtDate(d.date, 'long')}</option>
-            ))}
-          </optgroup>
+          {(dates.includes(date) ? dates : [date, ...dates]).map((d) => (
+            <option key={d} value={d}>{fmtDate(d, 'long')}{d === today ? ' · today' : ''}</option>
+          ))}
         </select>
-        <button className="btn btn--ghost btn--icon hide-xs" onClick={() => step(1)} disabled={pos < 0 || pos >= sessions.length - 1} aria-label="Next session"><ChevronRight size={16} /></button>
+        <button className="btn btn--ghost btn--icon hide-xs" onClick={() => step(1)} disabled={idx <= 0} aria-label="Next session"><ChevronRight size={16} /></button>
       </div>
 
       <button className="btn btn--ghost btn--icon" onClick={onPalette} aria-label="Open command palette" title={`Search (${isMac ? '⌘' : 'Ctrl'} K)`}><Command size={16} /></button>

@@ -1,4 +1,4 @@
-import { Activity, BarChart3, ClipboardList, FlaskConical, Gauge, Layers, LineChart, ScrollText, Settings, ShieldAlert, TrendingUp, type LucideIcon } from 'lucide-react'
+import { Activity, BarChart3, ClipboardList, FlaskConical, Gauge, Layers, LineChart, Settings, ShieldAlert, TrendingUp, type LucideIcon } from 'lucide-react'
 
 export interface RouteDef {
   path: string
@@ -17,8 +17,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/strategies', label: 'Strategies', icon: BarChart3, primary: true, keywords: 'scorecard catalog alpha' },
   { path: '/market', label: 'Market', icon: LineChart, primary: true, keywords: 'vix pcr max pain option chain nse' },
   { path: '/risk', label: 'Risk', icon: ShieldAlert, primary: true, keywords: 'risk gate kill switch compliance circuit breaker' },
-  { path: '/system', label: 'System Health', icon: Activity, primary: false, keywords: 'broker websocket scheduler resilience' },
-  { path: '/logs', label: 'Event Log', icon: ScrollText, primary: false, keywords: 'logs events search' },
+  { path: '/system', label: 'System Health', icon: Activity, primary: false, keywords: 'broker websocket scheduler runner health' },
   { path: '/backtests', label: 'Backtest Lab', icon: FlaskConical, primary: false, keywords: 'walk forward sharpe synthetic' },
-  { path: '/about', label: 'Settings', icon: Settings, primary: false, keywords: 'theme api key live provenance about' },
+  { path: '/settings', label: 'Settings', icon: Settings, primary: false, keywords: 'theme api key url connect' },
 ]

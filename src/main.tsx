@@ -7,14 +7,11 @@ import './styles/base.css'
 import './styles/layout.css'
 import './styles/components.css'
 import { App } from './App'
-import { DataProvider } from './data/store'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>
-      <DataProvider>
-        <App />
-      </DataProvider>
+      <App />
     </HashRouter>
   </StrictMode>,
 )

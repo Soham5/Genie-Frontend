@@ -1,24 +1,16 @@
-import type { ReactNode } from 'react'
 import { AlertOctagon, AlertTriangle, Info, XOctagon } from 'lucide-react'
-import { useDay, useSelectedDate } from '@/data/store'
-import type { DayDetail, DayStatus, FeedEvent, Level } from '@/types'
 import { prettyEvent } from '@/lib/format'
-import { Badge, Callout, Skeleton } from './Panel'
+import { Badge } from './Panel'
 
-/** Renders children once the selected day's detail file has loaded. */
-export function DayGate({ children }: { children: (day: DayDetail, date: string) => ReactNode }) {
-  const [date] = useSelectedDate()
-  const { day, error } = useDay(date)
-  if (error) return <Callout tone="neg" title="Couldn't load this session.">{error}</Callout>
-  if (!day) {
-    return (
-      <div className="stack" aria-busy="true">
-        <Skeleton height={96} />
-        <Skeleton height={320} />
-      </div>
-    )
-  }
-  return <>{children(day, date)}</>
+export type Level = 'info' | 'warning' | 'error' | 'critical'
+export type DayStatus = 'healthy' | 'degraded' | 'incident' | 'idle'
+
+export interface FeedEvent {
+  t: string
+  level: Level
+  event: string
+  component: string
+  msg: string
 }
 
 export const LEVEL_TONE: Record<Level, 'muted' | 'warn' | 'neg'> = { info: 'muted', warning: 'warn', error: 'neg', critical: 'neg' }

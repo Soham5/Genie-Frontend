@@ -1,6 +1,4 @@
-import type { ClosedTrade, Trade } from '@/types'
-
-export const isClosed = (t: Trade): t is ClosedTrade => t.status === 'closed' && t.net != null
+import type { ClosedTrade } from './trades'
 
 export interface TradeStats {
   count: number
@@ -22,7 +20,7 @@ export interface TradeStats {
   maxLossStreak: number
 }
 
-export const tradeCosts = (t: ClosedTrade) => t.brokerage + t.stt + t.exchCharges + t.gst
+export const tradeCosts = (t: ClosedTrade) => t.brokerage + t.stt + t.exchCharges + t.gst + t.other
 
 /** R-multiple = net P&L over the risk budgeted at entry. Null when the entry had no recorded risk. */
 export const rMultiple = (t: ClosedTrade): number | null => (t.initialRisk && t.initialRisk > 0 ? t.net / t.initialRisk : null)
@@ -43,7 +41,7 @@ export function equityCurve(trades: ClosedTrade[], field: 'net' | 'gross' = 'net
   return trades.map((t, i) => {
     equity += t[field]
     peak = Math.max(peak, equity)
-    return { i: i + 1, label: `${t.exitDate} ${t.exitT.slice(0, 5)}`, equity: round(equity), drawdown: round(equity - peak), pnl: t[field], strategy: t.strategy }
+    return { i: i + 1, label: `${t.exitDate} ${(t.exitT ?? '').slice(0, 5)}`, equity: round(equity), drawdown: round(equity - peak), pnl: t[field], strategy: t.strategy }
   })
 }
 

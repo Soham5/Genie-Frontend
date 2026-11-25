@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { ClosedTrade } from '@/types'
+import type { ClosedTrade } from './trades'
 import { computeStats, dailyPnl, equityCurve, histogram, rMultiple, sharpeFromDaily } from './stats'
 
 const trade = (net: number, over: Partial<ClosedTrade> = {}): ClosedTrade => ({
-  id: String(Math.random()), strategy: 's', lane: 'research', symbol: 'X', exchange: 'NSE', action: 'BUY', qty: 1,
+  id: String(Math.random()), strategy: 's', lane: 'research', symbol: 'X', exchange: 'NSE', side: 'BUY', qty: 1,
   entryDate: '2026-01-01', entryT: '09:30:00', exitDate: '2026-01-01', exitT: '10:00:00', entryPrice: 100, exitPrice: 101,
   stopLoss: null, target: null, initialRisk: 100, reason: 'TARGET_HIT', gross: net + 10, brokerage: 4, stt: 3, exchCharges: 2, gst: 1,
-  slippage: 0, net, circuitState: 'NORMAL', status: 'closed', ...over,
+  other: 0, slippage: 0, net, underlying: null, expiry: null, netCredit: null, legs: [], hasDetail: true, ...over,
 })
 
 describe('computeStats', () => {

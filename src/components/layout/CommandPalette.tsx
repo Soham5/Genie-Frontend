@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CalendarDays, CornerDownLeft, Moon, Sun } from 'lucide-react'
 import { ROUTES } from '@/routes'
-import { useSelectedDate, useStore } from '@/data/store'
+import { useSessionDate } from '@/api/session'
 import { fmtDate } from '@/lib/format'
 import type { Theme } from '@/hooks/useTheme'
 
@@ -17,10 +17,9 @@ interface Item {
 }
 
 export function CommandPalette({ open, onClose, theme, toggleTheme }: { open: boolean; onClose: () => void; theme: Theme; toggleTheme: () => void }) {
-  const { index } = useStore()
+  const { dates, today, setDate } = useSessionDate()
   const navigate = useNavigate()
   const loc = useLocation()
-  const [, setDate] = useSelectedDate()
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -43,18 +42,15 @@ export function CommandPalette({ open, onClose, theme, toggleTheme }: { open: bo
       icon: <r.icon size={16} />,
       run: () => navigate({ pathname: r.path, search }),
     }))
-    const days: Item[] = [...index.days]
-      .filter((d) => d.hasSession)
-      .reverse()
-      .map((d) => ({
-        id: `d-${d.date}`,
-        group: 'Sessions',
-        label: fmtDate(d.date, 'long'),
-        hint: d.status,
-        keywords: `${d.date} session day ${d.status}`,
-        icon: <CalendarDays size={16} />,
-        run: () => setDate(d.date),
-      }))
+    const days: Item[] = dates.slice(0, 40).map((d) => ({
+      id: `d-${d}`,
+      group: 'Sessions',
+      label: fmtDate(d, 'long'),
+      hint: d === today ? 'today' : undefined,
+      keywords: `${d} session day`,
+      icon: <CalendarDays size={16} />,
+      run: () => setDate(d),
+    }))
     const actions: Item[] = [
       {
         id: 'theme',
@@ -66,7 +62,7 @@ export function CommandPalette({ open, onClose, theme, toggleTheme }: { open: bo
       },
     ]
     return [...nav, ...actions, ...days]
-  }, [index.days, loc.search, navigate, setDate, theme, toggleTheme])
+  }, [dates, today, loc.search, navigate, setDate, theme, toggleTheme])
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()

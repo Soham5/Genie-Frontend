@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { fromLive, fromTrades, payoff, totals, type PosLeg } from './positions'
-import type { Trade } from '@/types'
+import { fromClosed, fromLive, payoff, totals, type PosLeg } from './positions'
+import type { ClosedTrade } from './trades'
 
 const leg = (action: 'BUY' | 'SELL', type: 'CE' | 'PE', strike: number, avg: number): PosLeg => ({
   no: 1, action, type, strike, expiry: null, symbol: null, qty: 100, lots: 1, avg, ltp: null, pnl: null, source: 'live',
 })
 
-const trade = (over: Partial<Trade>): Trade => ({
-  id: 't', strategy: 's', lane: 'research', symbol: 'BANKNIFTY_PE', exchange: 'NFO', action: 'BUY', qty: 30,
-  entryDate: '2026-11-20', entryT: '10:00:00', exitDate: null, exitT: null, entryPrice: 100, exitPrice: null,
-  stopLoss: 80, target: 140, initialRisk: 600, reason: null, gross: null, brokerage: null, stt: null,
-  exchCharges: null, gst: null, slippage: null, net: null, circuitState: null, status: 'open', ...over,
+const closed = (over: Partial<ClosedTrade>): ClosedTrade => ({
+  id: 't', strategy: 's', lane: 'research', symbol: 'NIFTY_IRON_CONDOR', exchange: 'NFO', side: 'SELL', qty: 65,
+  entryDate: '2026-11-20', entryT: '10:00:00', exitDate: '2026-11-23', exitT: '11:00:00', entryPrice: 50, exitPrice: 30,
+  stopLoss: 80, target: 20, reason: 'TARGET_HIT', gross: 1400, net: 1300, brokerage: 40, stt: 30, exchCharges: 10, gst: 10, other: 0,
+  slippage: 10, underlying: 'NIFTY', expiry: '2026-11-26', netCredit: 50, legs: [], hasDetail: true, initialRisk: 1950, ...over,
 })
 
 describe('payoff', () => {
@@ -34,20 +34,24 @@ describe('payoff', () => {
   })
 })
 
-describe('fromTrades', () => {
-  it('keeps carried open entries, drops positions closed on earlier days', () => {
-    const rows = fromTrades(
-      [
-        trade({ id: 'carried' }),
-        trade({ id: 'old', exitDate: '2026-11-21', exitT: '11:00:00', exitPrice: 120, net: 500, status: 'closed' }),
-        trade({ id: 'today', exitDate: '2026-11-23', exitT: '11:00:00', exitPrice: 120, net: 500, status: 'closed' }),
-        trade({ id: 'future', entryDate: '2026-11-24' }),
-      ],
-      '2026-11-23',
-    )
-    expect(rows.map((r) => r.id).sort()).toEqual(['carried', 'today'])
-    expect(rows.find((r) => r.id === 'carried')).toMatchObject({ status: 'open', carried: true, pnl: null })
-    expect(totals(rows)).toMatchObject({ realised: 500, open: null, unpriced: 1 })
+describe('fromClosed', () => {
+  it('maps a closed combo with its entry legs and realised P&L', () => {
+    const [p] = fromClosed([
+      closed({
+        legs: [
+          { leg_no: 1, action: 'SELL', option_type: 'CE', strike: 100, lot_size: 65, price: 30, symbol: 'A' },
+          { leg_no: 2, action: 'BUY', option_type: 'CE', strike: 110, lot_size: 65, price: 10, symbol: 'B' },
+        ],
+      }),
+    ])
+    expect(p).toMatchObject({ kind: 'combo', status: 'closed', pnl: 1300, side: 'SELL', lots: 1, carried: true, source: 'closed' })
+    expect(p.legs.map((l) => l.avg)).toEqual([30, 10])
+    expect(totals([p])).toMatchObject({ realised: 1300, closedCount: 1, openCount: 0 })
+  })
+
+  it('degrades gracefully for older trades with no stored detail', () => {
+    const [p] = fromClosed([closed({ legs: [], side: null, exchange: null, symbol: 'RELIANCE', hasDetail: false })])
+    expect(p).toMatchObject({ kind: 'equity', side: 'BUY', legs: [] })
   })
 })
 

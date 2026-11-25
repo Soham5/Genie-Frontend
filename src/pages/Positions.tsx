@@ -1,17 +1,17 @@
 import { Fragment, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
-import { useSelectedDate, useStore } from '@/data/store'
+import { useApiState } from '@/api/ApiProvider'
+import { useSessionDate } from '@/api/session'
+import { useTrades } from '@/api/TradesProvider'
 import { useLiveBook } from '@/hooks/useLiveBook'
-import { getApiBase } from '@/hooks/useLiveApi'
-import { fromTrades, optionLabel, payoff, payoffReady, scenarios, totals, type PosLeg, type Position } from '@/lib/positions'
+import { fromClosed, optionLabel, payoff, payoffReady, scenarios, totals, type PosLeg, type Position } from '@/lib/positions'
 import { fmtAgo, fmtDate, fmtINR, fmtNum, pnlTone, prettyStrategy } from '@/lib/format'
-import { Badge, Callout, Empty, PageHead, Panel, Seg } from '@/components/ui/Panel'
+import { Badge, Callout, Empty, PageHead, Panel, Seg, Skeleton } from '@/components/ui/Panel'
 import { SideChip } from '@/components/ui/bits'
 import { PayoffChart } from '@/components/charts/PayoffChart'
 import { clsx } from '@/lib/clsx'
 
-type Source = 'live' | 'snapshot'
 type Tab = 'day' | 'net'
 type LaneFilter = 'all' | 'managed' | 'research'
 type SegFilter = 'all' | 'NFO' | 'NSE'
@@ -19,73 +19,70 @@ type SegFilter = 'all' | 'NFO' | 'NSE'
 const money = (n: number | null | undefined) => (n == null ? '—' : fmtINR(n, { sign: true, decimals: true }).replace('₹', ''))
 
 export default function Positions() {
-  const { trades } = useStore()
-  const [date] = useSelectedDate()
+  const { trades, loading: tradesLoading, error: tradesError, unsupported } = useTrades()
+  const { date, isToday } = useSessionDate()
+  const { status } = useApiState()
   const book = useLiveBook()
   const { search } = useLocation()
-  const [pick, setPick] = useState<Source | null>(null)
   const [tab, setTab] = useState<Tab>('day')
   const [lane, setLane] = useState<LaneFilter>('all')
   const [segment, setSegment] = useState<SegFilter>('all')
 
-  const source: Source = pick ?? (book.state === 'live' ? 'live' : 'snapshot')
-  const hasApi = !!getApiBase()
-
-  const all = useMemo(() => (source === 'live' ? book.positions : fromTrades(trades, date)), [source, book.positions, trades, date])
-  const rows = useMemo(() => {
-    let r = all.filter((p) => (lane === 'all' || p.lane === lane) && (segment === 'all' || p.segment === segment))
-    if (source === 'snapshot' && tab === 'net') r = r.filter((p) => p.status === 'open')
-    if (source === 'snapshot' && tab === 'day') r = r.filter((p) => !(p.carried && p.status === 'open'))
-    return r
-  }, [all, lane, segment, tab, source])
+  // Open positions only exist "now"; past sessions show what was closed that day.
+  const closedToday = useMemo(() => fromClosed(trades.filter((t) => t.exitDate === date)), [trades, date])
+  const all = useMemo(() => {
+    const open = isToday ? book.positions : []
+    return tab === 'net' ? open : [...open, ...closedToday]
+  }, [isToday, book.positions, closedToday, tab])
+  const rows = useMemo(() => all.filter((p) => (lane === 'all' || p.lane === lane) && (segment === 'all' || p.segment === segment)), [all, lane, segment])
 
   const open = rows.filter((p) => p.status === 'open')
   const closed = rows.filter((p) => p.status === 'closed')
   const t = totals(rows)
-  const live = source === 'live'
+  const booting = isToday && (book.state === 'connecting' || book.state === 'off') && book.positions.length === 0
 
   return (
     <>
       <PageHead
         title="Positions"
-        sub={live ? `Live mark-to-market from the Genie API · refreshed ${book.asOf ? fmtAgo(book.asOf.toISOString()) : '—'}` : `Snapshot from the log export · ${fmtDate(date, 'long')}`}
+        sub={isToday ? `Live mark-to-market from the Genie API · refreshed ${book.asOf ? fmtAgo(book.asOf.toISOString()) : '—'}` : `Closed on ${fmtDate(date, 'long')} · open positions are only available for today`}
         actions={
           <>
             <Seg<SegFilter> label="Segment" value={segment} onChange={setSegment} options={[{ value: 'all', label: 'All' }, { value: 'NFO', label: 'F&O' }, { value: 'NSE', label: 'Equity' }]} />
             <Seg<LaneFilter> label="Lane" value={lane} onChange={setLane} options={[{ value: 'all', label: 'All' }, { value: 'managed', label: 'Managed' }, { value: 'research', label: 'Research' }]} />
-            <Seg<Source> label="Data source" value={source} onChange={setPick} options={[{ value: 'live', label: <>Live{book.state === 'live' && <span className="dot dot--pos dot--pulse" style={{ marginLeft: 6 }} />}</> }, { value: 'snapshot', label: 'Snapshot' }]} />
-            {live && <button className="btn btn--sm" onClick={book.refresh}><RefreshCw size={13} /> Refresh</button>}
+            <button className="btn btn--sm" onClick={book.refresh} disabled={status !== 'online'}><RefreshCw size={13} /> Refresh</button>
           </>
         }
       />
       <div className="stack">
-        {live && book.state !== 'live' && (
-          <Callout tone={hasApi ? 'warn' : 'info'} title={hasApi ? (book.state === 'connecting' ? 'Connecting to the Genie API…' : 'Live data unavailable.') : 'Live mode is not set up.'}>
-            {hasApi ? book.error : 'Add your API URL and a read-only key to see leg-level LTPs and mark-to-market P&L.'}{' '}
-            <Link className="link-btn" to={{ pathname: '/about', search }}>Open Settings</Link>
+        {isToday && book.state === 'error' && (
+          <Callout tone="warn" title="Live positions unavailable.">
+            {book.error}{' '}
+            <Link className="link-btn" to={{ pathname: '/settings', search }}>Open Settings</Link>
           </Callout>
         )}
-        {!live && (
-          <Callout tone="info" title="Snapshot has no live prices.">
-            The log export records fills, not quotes, so open positions show P&amp;L at stop / target instead of mark-to-market. Switch to <strong>Live</strong> for real LTPs.
-            Option legs lost in log truncation are marked <em>derived</em> or <em>not logged</em>.
-          </Callout>
+        {unsupported && <Callout tone="warn" title="Closed trades unavailable.">The API has no <code>/console/trades</code> endpoint — update the Genie backend.</Callout>}
+        {tradesError && !unsupported && <Callout tone="warn" title="Closed trades unavailable.">{tradesError.message}</Callout>}
+        {closed.some((p) => p.legs.length === 0 && p.segment === 'NFO') && (
+          <Callout tone="info" title="Some closed F&amp;O positions have no leg detail.">Trades closed before the Genie engine began storing legs only carry the net premium.</Callout>
         )}
 
         <div className="pnlstrip">
-          <PnlCell label="Open P&L" value={t.open} note={live ? `${t.openCount} open` : open.length ? 'needs live quotes' : 'flat'} />
-          <PnlCell label="Realised" value={live ? null : t.realised} note={live ? 'see P&L page' : `${t.closedCount} closed`} />
-          <PnlCell label="Total P&L" value={live ? t.open : t.total} note={live ? 'unrealised' : t.unpriced ? `${t.unpriced} unpriced` : 'net of costs'} strong />
+          <PnlCell label="Open P&L" value={isToday ? t.open : null} note={isToday ? `${t.openCount} open` : 'live only'} />
+          <PnlCell label="Realised" value={t.closedCount ? t.realised : tradesLoading ? null : 0} note={`${t.closedCount} closed · net of costs`} />
+          <PnlCell label="Total P&L" value={isToday ? t.total : t.realised} note={t.unpriced ? `${t.unpriced} unpriced` : 'open + realised'} strong />
         </div>
 
         <Panel
-          title={live ? 'Open positions' : tab === 'day' ? 'Day positions' : 'Net positions'}
-          sub={live ? `${open.length} open` : `${open.length} open · ${closed.length} closed`}
+          title={tab === 'day' ? 'Day positions' : 'Net positions'}
+          sub={`${open.length} open · ${closed.length} closed`}
           flush
-          actions={!live && <Seg<Tab> label="Position view" value={tab} onChange={setTab} options={[{ value: 'day', label: 'Day' }, { value: 'net', label: 'Net (open)' }]} />}
+          actions={<Seg<Tab> label="Position view" value={tab} onChange={setTab} options={[{ value: 'day', label: 'Day' }, { value: 'net', label: 'Net (open)' }]} />}
         >
-          {rows.length === 0 ? (
-            <Empty title={live ? 'No open positions' : 'No positions'}>{live ? 'The book is flat.' : 'Nothing was opened or closed in this view.'}</Empty>
+          {booting || (tradesLoading && rows.length === 0) ? (
+            <Skeleton height={160} />
+          ) : rows.length === 0 ? (
+            <Empty title="No positions">{isToday ? 'The book is flat and nothing has closed on this session.' : 'Nothing closed on this session.'}</Empty>
           ) : (
             <div className="tbl-wrap">
               <table className="tbl tbl--dense pos-tbl">
@@ -98,22 +95,22 @@ export default function Positions() {
                     <th className="r">Avg.</th>
                     <th className="r">LTP</th>
                     <th className="r">P&amp;L</th>
-                    {!live && <th className="r hide-sm">@ Stop</th>}
-                    {!live && <th className="r hide-sm">@ Target</th>}
+                    <th className="r hide-sm">@ Stop</th>
+                    <th className="r hide-sm">@ Target</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((p) => (
-                    <PositionRows key={p.id} p={p} live={live} />
+                    <PositionRows key={p.id} p={p} />
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
                     <td />
-                    <td colSpan={live ? 5 : 7}><strong>Total</strong></td>
-                    <td className={clsx('r num', pnlTone(live ? t.open : t.total))}><strong>{money(live ? t.open : t.total)}</strong></td>
-                    {!live && <td className="hide-sm" />}
-                    {!live && <td className="hide-sm" />}
+                    <td colSpan={5}><strong>Total</strong></td>
+                    <td className={clsx('r num', pnlTone(isToday ? t.total : t.realised))}><strong>{money(isToday ? t.total : t.realised)}</strong></td>
+                    <td className="hide-sm" />
+                    <td className="hide-sm" />
                   </tr>
                 </tfoot>
               </table>
@@ -135,7 +132,7 @@ function PnlCell({ label, value, note, strong }: { label: string; value: number 
   )
 }
 
-function PositionRows({ p, live }: { p: Position; live: boolean }) {
+function PositionRows({ p }: { p: Position }) {
   const [open, setOpen] = useState(false)
   const expandable = p.legs.length > 0 || p.kind !== 'equity'
   const sc = useMemo(() => scenarios(p), [p])
@@ -151,7 +148,7 @@ function PositionRows({ p, live }: { p: Position; live: boolean }) {
               <Badge tone="outline">{p.segment}</Badge>
               {combo && <Badge tone="violet">{p.legs.length} legs</Badge>}
               {p.status === 'closed' && <Badge tone="muted">Closed{p.reason ? ` · ${p.reason.replace('_HIT', '')}` : ''}</Badge>}
-              {p.carried && p.status === 'open' && <Badge tone="warn" title="Opened on an earlier session and never logged an exit">Carried</Badge>}
+              {p.carried && <Badge tone="warn" title="Opened on an earlier session">Carried</Badge>}
             </span>
           </div>
         </td>
@@ -172,14 +169,14 @@ function PositionRows({ p, live }: { p: Position; live: boolean }) {
           {combo && p.ltp != null && <div className="muted tiny">{p.status === 'closed' ? 'exit' : 'to close'}</div>}
         </td>
         <td className={clsx('r num', pnlTone(p.pnl))}>
-          <strong>{p.pnl == null ? <span className="muted" title="No live quote in the log snapshot">—</span> : money(p.pnl)}</strong>
+          <strong>{p.pnl == null ? <span className="muted" title="No live quote yet">—</span> : money(p.pnl)}</strong>
         </td>
-        {!live && <td className={clsx('r num hide-sm', pnlTone(sc.atStop))}>{p.status === 'open' ? money(sc.atStop) : ''}</td>}
-        {!live && <td className={clsx('r num hide-sm', pnlTone(sc.atTarget))}>{p.status === 'open' ? money(sc.atTarget) : ''}</td>}
+        <td className={clsx('r num hide-sm', pnlTone(sc.atStop))}>{p.status === 'open' ? money(sc.atStop) : ''}</td>
+        <td className={clsx('r num hide-sm', pnlTone(sc.atTarget))}>{p.status === 'open' ? money(sc.atTarget) : ''}</td>
       </tr>
       {open && (
         <tr className="expanded">
-          <td colSpan={live ? 7 : 9} style={{ padding: '12px 16px' }}>
+          <td colSpan={9} style={{ padding: '12px 16px' }}>
             <Detail p={p} />
           </td>
         </tr>
@@ -192,9 +189,7 @@ function legBadge(l: PosLeg) {
   if (l.unmarked) return <Badge tone="warn" title="No fresh tick for this leg; LTP shows its entry price">no tick</Badge>
   switch (l.source) {
     case 'live': return <Badge tone="accent">live</Badge>
-    case 'logged': return <Badge tone="pos" title="Read directly from the entry record">logged</Badge>
-    case 'derived': return <Badge tone="info" title="Reconstructed from the strategy structure and net credit">derived</Badge>
-    default: return <Badge tone="warn" title="This leg was lost when the log line was truncated">not logged</Badge>
+    default: return <Badge tone="info" title="Entry price recorded when the trade opened; per-leg exit marks aren't stored">entry</Badge>
   }
 }
 
@@ -257,7 +252,7 @@ function Detail({ p }: { p: Position }) {
           </dl>
         </div>
       )}
-      {missing && <span className="muted tiny">Payoff needs every leg&apos;s strike and price. Some were not preserved in the logs; connect the live API for complete legs.</span>}
+      {missing && <span className="muted tiny">Payoff needs every leg&apos;s strike and price, which this position doesn&apos;t have.</span>}
     </div>
   )
 }

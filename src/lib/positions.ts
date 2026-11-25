@@ -1,4 +1,5 @@
-import type { Lane, LegSource, Trade } from '@/types'
+import type { Lane } from '@/api/types'
+import type { ClosedTrade } from './trades'
 
 export type Side = 'BUY' | 'SELL'
 
@@ -14,7 +15,8 @@ export interface PosLeg {
   avg: number | null
   ltp: number | null
   pnl: number | null
-  source: LegSource | 'live'
+  /** `entry` = recorded at entry on a closed trade (no exit mark per leg). */
+  source: 'live' | 'entry'
   /** Live feed had no fresh tick for this leg, so `ltp` is just its entry price. */
   unmarked?: boolean
 }
@@ -46,7 +48,7 @@ export interface Position {
   target: number | null
   legs: PosLeg[]
   carried: boolean
-  source: 'snapshot' | 'live'
+  source: 'closed' | 'live'
 }
 
 const STRUCTURES: [RegExp, string][] = [
@@ -84,50 +86,46 @@ export const optionLabel = (l: Pick<PosLeg, 'symbol' | 'strike' | 'type' | 'expi
   return `${underlying ?? 'Option'} ${l.type ?? ''} · strike n/a`.trim()
 }
 
-/** Positions as of `date` built from the log snapshot (no live quotes, so open P&L is null). */
-export function fromTrades(trades: Trade[], date: string): Position[] {
-  const out: Position[] = []
-  for (const t of trades) {
-    if (!t.entryDate || t.entryDate > date) continue
-    const exitedByDate = t.exitDate != null && t.exitDate <= date
-    // Relevant to this session: opened today, closed today, or still carried from earlier.
-    if (exitedByDate && t.exitDate !== date) continue
-    const closed = exitedByDate
-    const kind: Position['kind'] = t.legs && t.legs.length > 1 ? 'combo' : t.exchange === 'NFO' || isOptionTicker(t.symbol) ? 'option' : 'equity'
-    const side = (t.action === 'SELL' ? 'SELL' : 'BUY') as Side
-    const legs: PosLeg[] = (t.legs ?? []).map((l) => ({
-      no: l.no, action: l.action, type: l.type, strike: l.strike, expiry: t.expiry ?? null, symbol: l.symbol,
-      qty: l.qty, lots: l.lots, avg: l.price, ltp: null, pnl: null, source: l.source,
-    }))
-    out.push({
-      id: t.id,
-      strategy: t.strategy,
-      lane: t.lane,
-      segment: t.exchange === 'NFO' ? 'NFO' : 'NSE',
-      kind,
-      instrument: instrumentLabel(t.symbol, t.underlying ?? null, t.expiry ?? null),
-      underlying: t.underlying ?? null,
-      expiry: t.expiry ?? null,
-      side,
-      qty: t.qty,
-      lots: t.lotSize ? Math.round((t.qty / t.lotSize) * 100) / 100 : null,
-      avg: t.entryPrice,
-      ltp: closed ? t.exitPrice : null,
-      pnl: closed ? t.net : null,
-      status: closed ? 'closed' : 'open',
-      openedDate: t.entryDate,
-      openedT: t.entryT,
-      closedT: closed ? t.exitT : null,
-      exitPrice: closed ? t.exitPrice : null,
-      reason: closed ? t.reason : null,
-      stop: t.stopLoss,
-      target: t.target,
-      legs,
-      carried: t.entryDate < date,
-      source: 'snapshot',
+/** Maps closed trades from `/console/trades` to positions. Legs (entry prices only) exist for trades closed after the engine started storing them. */
+export function fromClosed(trades: ClosedTrade[]): Position[] {
+  return trades
+    .map((t): Position => {
+      const lot = t.legs.find((l) => l.lot_size)?.lot_size
+      const kind: Position['kind'] = t.legs.length > 1 ? 'combo' : t.exchange === 'NFO' || isOptionTicker(t.symbol) ? 'option' : 'equity'
+      const legs: PosLeg[] = t.legs.map((l, i) => ({
+        no: l.leg_no ?? l.leg_id ?? i + 1, action: sideOf(l.action), type: l.option_type, strike: l.strike, expiry: t.expiry, symbol: l.symbol ?? null,
+        qty: l.qty ?? t.qty, lots: l.lot_size ? Math.round(((l.qty ?? t.qty) / l.lot_size) * 100) / 100 : null, avg: l.price ?? l.ltp ?? null,
+        ltp: null, pnl: null, source: 'entry',
+      }))
+      return {
+        id: t.id,
+        strategy: t.strategy,
+        lane: t.lane,
+        segment: t.exchange === 'NFO' || kind !== 'equity' ? 'NFO' : 'NSE',
+        kind,
+        instrument: instrumentLabel(t.symbol, t.underlying, t.expiry),
+        underlying: t.underlying,
+        expiry: t.expiry,
+        side: t.side ?? (kind === 'combo' ? 'SELL' : 'BUY'),
+        qty: t.qty,
+        lots: lot ? Math.round((t.qty / lot) * 100) / 100 : null,
+        avg: t.entryPrice,
+        ltp: t.exitPrice,
+        pnl: t.net,
+        status: 'closed',
+        openedDate: t.entryDate,
+        openedT: t.entryT,
+        closedT: t.exitT,
+        exitPrice: t.exitPrice,
+        reason: t.reason,
+        stop: t.stopLoss,
+        target: t.target,
+        legs,
+        carried: t.entryDate < t.exitDate,
+        source: 'closed',
+      }
     })
-  }
-  return out.sort((a, b) => (a.status === b.status ? (b.openedT ?? '').localeCompare(a.openedT ?? '') : a.status === 'open' ? -1 : 1))
+    .sort((a, b) => (b.closedT ?? '').localeCompare(a.closedT ?? ''))
 }
 
 // ── Live Genie API (`GET /api/v1/papertrade/pnl`) ────────────────────────────────────────────
