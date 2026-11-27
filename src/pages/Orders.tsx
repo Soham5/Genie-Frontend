@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useApiState } from '@/api/ApiProvider'
 import { useSessionDate } from '@/api/session'
 import { useTrades } from '@/api/TradesProvider'
 import { useApi } from '@/api/useApi'
 import { useLiveBook } from '@/hooks/useLiveBook'
-import { instrumentLabel, isOptionTicker, type Position } from '@/lib/positions'
-import type { ClosedTrade } from '@/lib/trades'
+import { executedFor, openFor, type Order } from '@/lib/orders'
+import { tradingSymbol } from '@/lib/positions'
 import { fmtDate, fmtNum, prettyStrategy } from '@/lib/format'
 import { Badge, Callout, PageHead, Panel, Seg, Skeleton } from '@/components/ui/Panel'
 import { DataTable, type Column } from '@/components/ui/DataTable'
@@ -14,55 +15,43 @@ import { ApiNote, fmtStamp, RefreshButton } from './ops/shared'
 
 type Tab = 'executed' | 'open' | 'broker' | 'approvals'
 
-interface Order {
-  id: string
-  t: string
-  side: string
-  instrument: string
-  segment: string
-  qty: number
-  price: number | null
-  kind: 'Entry' | 'Exit' | 'Open'
-  reason: string | null
-  strategy: string
-  lane: string
-  legs: number
-}
+const hasContracts = (o: Order) => o.contracts.length > 0
 
-const flip = (a: string | null) => (a === 'BUY' ? 'SELL' : a === 'SELL' ? 'BUY' : '—')
-
-function executedFor(trades: ClosedTrade[], date: string): Order[] {
-  const out: Order[] = []
-  for (const tr of trades) {
-    const base = {
-      instrument: instrumentLabel(tr.symbol, tr.underlying, tr.expiry),
-      segment: tr.exchange === 'NFO' || isOptionTicker(tr.symbol) || tr.legs.length ? 'NFO' : 'NSE',
-      qty: tr.qty,
-      strategy: tr.strategy,
-      lane: tr.lane,
-      legs: tr.legs.length,
-    }
-    if (tr.entryDate === date) out.push({ ...base, id: `${tr.id}-in`, t: tr.entryT ?? '', side: tr.side ?? '—', price: tr.entryPrice, kind: 'Entry', reason: null })
-    if (tr.exitDate === date) out.push({ ...base, id: `${tr.id}-out`, t: tr.exitT ?? '', side: flip(tr.side), price: tr.exitPrice, kind: 'Exit', reason: tr.reason })
-  }
-  return out.sort((a, b) => b.t.localeCompare(a.t))
-}
-
-function openFor(positions: Position[]): Order[] {
-  return positions.map((p) => ({
-    id: p.id,
-    t: p.openedT ?? '',
-    side: p.side,
-    instrument: p.instrument,
-    segment: p.segment,
-    qty: p.qty,
-    price: p.avg,
-    kind: 'Open',
-    reason: null,
-    strategy: p.strategy,
-    lane: p.lane,
-    legs: p.legs.length,
-  }))
+function Contracts({ o }: { o: Order }) {
+  const exit = o.kind === 'Exit'
+  const unpriced = o.contracts.filter((c) => c.price == null).length
+  return (
+    <div className="stack">
+      <div className="tbl-wrap">
+        <table className="tbl tbl--dense">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Contract</th>
+              <th className="r">Qty.</th>
+              <th className="r">{exit ? 'Exit price' : 'Avg. price'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {o.contracts.map((c) => (
+              <tr key={c.no}>
+                <td><SideChip side={c.side} /></td>
+                <td title={tradingSymbol(c.symbol)}>{c.label}</td>
+                <td className="r num">{c.qty}{c.lots != null && <span className="muted tiny"> · {fmtNum(c.lots, c.lots % 1 ? 1 : 0)}L</span>}</td>
+                <td className="r num">{fmtNum(c.price)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {unpriced > 0 && (
+        <span className="muted tiny">
+          No {exit ? 'exit' : 'entry'} price recorded for {unpriced} of {o.contracts.length} contracts
+          {exit ? ' (no quote at close, or the trade closed before exit prices were stored)' : ''}.
+        </span>
+      )}
+    </div>
+  )
 }
 
 interface BrokerOrder {
@@ -129,15 +118,28 @@ export default function Orders() {
       key: 'ins',
       header: 'Instrument',
       sort: (o) => o.instrument,
-      cell: (o) => (
-        <span>
-          {o.instrument} <Badge tone="outline">{o.segment}</Badge>
-          {o.legs > 1 && <> <Badge tone="violet">{o.legs} legs</Badge></>}
+      cell: (o, { open }) => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {o.contracts.length > 0 && (open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />)}
+          <span>
+            {o.instrument} <Badge tone="outline">{o.segment}</Badge>
+            {o.contracts.length > 1 && <> <Badge tone="violet">{o.contracts.length} legs</Badge></>}
+          </span>
         </span>
       ),
     },
     { key: 'qty', header: 'Qty.', align: 'r', sort: (o) => o.qty, cell: (o) => <span className="num">{o.qty}</span> },
-    { key: 'px', header: 'Avg. price', align: 'r', cell: (o) => <span className="num">{fmtNum(o.price)}</span> },
+    {
+      key: 'px',
+      header: 'Avg. price',
+      align: 'r',
+      cell: (o) => (
+        <>
+          <span className="num">{fmtNum(o.price)}</span>
+          {o.contracts.length > 1 && <div className="muted tiny">net premium</div>}
+        </>
+      ),
+    },
     { key: 'st', header: 'Status', cell: (o) => (o.kind === 'Open' ? <Badge tone="info" dot>OPEN POSITION</Badge> : <Badge tone="pos" dot>COMPLETE</Badge>) },
     ...(withKind ? [{ key: 'kind', header: 'Note', cell: (o: Order) => <span className="muted">{o.kind === 'Entry' ? 'Entry' : `Exit · ${(o.reason ?? 'closed').replace('_HIT', '')}`}</span> }] : []),
     { key: 'strat', header: 'Strategy', sort: (o) => o.strategy, cell: (o) => <span>{prettyStrategy(o.strategy)} <Badge tone={o.lane === 'managed' ? 'accent' : 'outline'}>{o.lane}</Badge></span> },
@@ -200,16 +202,16 @@ export default function Orders() {
         {error && !unsupported && <Callout tone="warn" title="Closed trades unavailable.">{error.message}</Callout>}
 
         {tab === 'executed' && (
-          <Panel flush title="Executed orders" sub="Derived from closed trades: one entry and one exit order per trade, filled in full">
-            {loading && !trades.length ? <Skeleton height={160} /> : <DataTable dense rows={execRows} columns={cols(true)} rowKey={(o) => o.id} initialSort={{ key: 't', dir: 'desc' }} emptyTitle="No orders this session" emptyHint="Nothing was entered or exited on this date." />}
+          <Panel flush title="Executed orders" sub="Derived from closed trades: one entry and one exit order per trade, filled in full. Click a multi-leg F&amp;O order for its contracts.">
+            {loading && !trades.length ? <Skeleton height={160} /> : <DataTable dense rows={execRows} columns={cols(true)} rowKey={(o) => o.id} expand={(o) => <Contracts o={o} />} canExpand={hasContracts} initialSort={{ key: 't', dir: 'desc' }} emptyTitle="No orders this session" emptyHint="Nothing was entered or exited on this date." />}
           </Panel>
         )}
 
         {tab === 'open' && (
-          <Panel flush title="Open positions" sub="Entry orders still working — from the live paper book">
+          <Panel flush title="Open positions" sub="Entry orders still working — from the live paper book. Click a multi-leg F&amp;O order for its contracts.">
             {!isToday && <div style={{ padding: 12 }}><Callout tone="info">Open positions are only available for today; the selected session is {fmtDate(date, 'long')}.</Callout></div>}
             {book.state === 'error' && <div style={{ padding: 12 }}><Callout tone="warn" title="Live book unavailable.">{book.error}</Callout></div>}
-            {book.state === 'connecting' ? <Skeleton height={120} /> : <DataTable dense rows={openRows} columns={cols(false)} rowKey={(o) => o.id} initialSort={{ key: 't', dir: 'desc' }} emptyTitle="No open positions" emptyHint="The book is flat." />}
+            {book.state === 'connecting' ? <Skeleton height={120} /> : <DataTable dense rows={openRows} columns={cols(false)} rowKey={(o) => o.id} expand={(o) => <Contracts o={o} />} canExpand={hasContracts} initialSort={{ key: 't', dir: 'desc' }} emptyTitle="No open positions" emptyHint="The book is flat." />}
           </Panel>
         )}
 

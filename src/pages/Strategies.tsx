@@ -154,7 +154,7 @@ export default function Strategies() {
         sub={
           registered == null
             ? 'Strategy registry, live paper performance and lifecycle'
-            : `${registered} registered · ${managedCount} managed · ${researchCount} research · ${totals.active} with paper activity`
+            : `${registered} registered · ${managedCount} managed · ${researchCount} research · ${totals.active} have traded · ${Math.max(0, shown.length - totals.active)} no trades yet`
         }
         actions={
           <>
@@ -180,7 +180,7 @@ export default function Strategies() {
           <Stat
             label="Strategies"
             value={reg.loading ? '…' : shown.length}
-            foot={reg.data ? `${totals.active} traded · ${shown.filter((r) => r.cfg?.status === 'deactivated').length} deactivated` : 'registry'}
+            foot={reg.data ? `${totals.active} traded · ${Math.max(0, shown.length - totals.active)} idle · ${shown.filter((r) => r.cfg?.status === 'deactivated').length} deactivated` : 'registry'}
           />
           <Stat
             label="Net P&L (closed)"

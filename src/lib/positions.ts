@@ -1,4 +1,4 @@
-import type { Lane } from '@/api/types'
+import type { ApiTradeLeg, Lane } from '@/api/types'
 import type { ClosedTrade } from './trades'
 
 export type Side = 'BUY' | 'SELL'
@@ -15,8 +15,11 @@ export interface PosLeg {
   avg: number | null
   ltp: number | null
   pnl: number | null
-  /** `entry` = recorded at entry on a closed trade (no exit mark per leg). */
-  source: 'live' | 'entry'
+  /**
+   * `live` = marked now. `exit` = closed trade: `ltp` is the price the contract was marked at on exit and `pnl` is net of
+   * the leg's share of costs. `entry` = closed trade where only the entry price was recorded.
+   */
+  source: 'live' | 'entry' | 'exit'
   /** Live feed had no fresh tick for this leg, so `ltp` is just its entry price. */
   unmarked?: boolean
 }
@@ -78,25 +81,63 @@ export function instrumentLabel(symbol: string, underlying: string | null, expir
 /** P&L of an `action` position that entered at `entry` and is marked/exited at `price`. */
 export const pnlAt = (action: Side, entry: number, price: number, qty: number) => (action === 'SELL' ? entry - price : price - entry) * qty
 
-export const optionLabel = (l: Pick<PosLeg, 'symbol' | 'strike' | 'type' | 'expiry'>, underlying: string | null): string => {
-  if (l.strike != null && l.type) {
-    const exp = l.expiry ? new Date(`${l.expiry}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).toUpperCase().replace(' ', '') : ''
-    return `${underlying ?? ''} ${exp} ${l.strike} ${l.type}`.replace(/\s+/g, ' ').trim()
-  }
+export const optionLabel = (l: Pick<PosLeg, 'strike' | 'type' | 'expiry'>, underlying: string | null): string => {
+  if (l.strike != null && l.type) return [underlying, expiryTag(l.expiry), l.strike, l.type].filter((x) => x != null && x !== '').join(' ')
   return `${underlying ?? 'Option'} ${l.type ?? ''} · strike n/a`.trim()
 }
 
-/** Maps closed trades from `/console/trades` to positions. Legs (entry prices only) exist for trades closed after the engine started storing them. */
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+
+/** `2026-12-01` → `01DEC`; null for anything that isn't an ISO date. */
+export function expiryTag(iso: string | null | undefined): string | null {
+  const m = iso ? /^\d{4}-(\d{2})-(\d{2})/.exec(iso) : null
+  const month = m ? MONTHS[Number(m[1]) - 1] : undefined
+  return m && month ? `${m[2]}${month}` : null
+}
+
+/** A leg's trading symbol (`NIFTY01DEC2625850CE`); undefined when it only carries the strategy's synthetic name. */
+export const tradingSymbol = (symbol: string | null | undefined): string | undefined => (symbol && /\d(CE|PE)$/.test(symbol) ? symbol : undefined)
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+const costOf = (charges: ApiTradeLeg['charges']) => Object.values(charges ?? {}).reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0)
+
+/** A leg's P&L after its share of costs: the API's `net_pnl`, else derived from `gross_pnl` and `charges`. Null when it was never priced at exit. */
+const legNet = (l: ApiTradeLeg): number | null => l.net_pnl ?? (l.gross_pnl != null ? round2(l.gross_pnl - costOf(l.charges)) : null)
+
+/**
+ * The contracts of a closed combo. `avg` is each leg's entry price; `ltp` and `pnl` are the exit mark and net result, which are
+ * null for a leg the engine could not price at exit and for every leg of a trade closed before it recorded them.
+ */
+export function closedLegs(t: ClosedTrade): PosLeg[] {
+  return t.legs.map((l, i) => {
+    const qty = l.qty ?? t.qty
+    const lotSize = l.lot_size ?? (t.underlying ? LOT_SIZES[t.underlying] : undefined)
+    const exit = l.exit_price ?? null
+    return {
+      no: l.leg_no ?? l.leg_id ?? i + 1,
+      action: sideOf(l.action),
+      type: l.option_type,
+      strike: l.strike,
+      expiry: l.expiry ?? t.expiry,
+      symbol: l.symbol ?? null,
+      qty,
+      lots: lotSize ? round2(qty / lotSize) : null,
+      avg: l.entry_price ?? l.price ?? l.ltp ?? null,
+      ltp: exit,
+      pnl: legNet(l),
+      source: exit != null ? 'exit' : 'entry',
+    }
+  })
+}
+
+/** Maps closed trades from `/console/trades` to positions. Legs exist for trades closed after the engine started storing them; those closed before it recorded exit marks only carry entry prices. */
 export function fromClosed(trades: ClosedTrade[]): Position[] {
   return trades
     .map((t): Position => {
       const lot = t.legs.find((l) => l.lot_size)?.lot_size
       const kind: Position['kind'] = t.legs.length > 1 ? 'combo' : t.exchange === 'NFO' || isOptionTicker(t.symbol) ? 'option' : 'equity'
-      const legs: PosLeg[] = t.legs.map((l, i) => ({
-        no: l.leg_no ?? l.leg_id ?? i + 1, action: sideOf(l.action), type: l.option_type, strike: l.strike, expiry: t.expiry, symbol: l.symbol ?? null,
-        qty: l.qty ?? t.qty, lots: l.lot_size ? Math.round(((l.qty ?? t.qty) / l.lot_size) * 100) / 100 : null, avg: l.price ?? l.ltp ?? null,
-        ltp: null, pnl: null, source: 'entry',
-      }))
+      const legs = closedLegs(t)
       return {
         id: t.id,
         strategy: t.strategy,

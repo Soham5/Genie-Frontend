@@ -77,17 +77,31 @@ export interface ApiTrade {
   charges: { brokerage?: number; stt?: number; exchange_charges?: number; gst?: number; other?: number; slippage?: number } | null
 }
 
+/** One contract of an F&O combo in `GET /console/trades`. */
 export interface ApiTradeLeg {
   leg_no?: number
   leg_id?: number
   action: string
   option_type: 'CE' | 'PE' | null
   strike: number | null
-  lot_size?: number
+  lot_size?: number | null
+  qty?: number
+  /** Trading symbol, e.g. `NIFTY01DEC2625850CE`. */
+  symbol?: string | null
+  underlying?: string | null
+  /** ISO date. */
+  expiry?: string | null
+  entry_price?: number | null
+  /** Price the contract was marked at when the position closed; null when it could not be priced. */
+  exit_price?: number | null
+  gross_pnl?: number | null
+  /** This leg's share of the trade's costs, slippage included. */
+  charges?: Record<string, number> | null
+  /** `gross_pnl` after `charges`. */
+  net_pnl?: number | null
+  /** Raw strategy leg from older API versions: the entry price was `price` (or `ltp`). */
   price?: number | null
   ltp?: number | null
-  qty?: number
-  symbol?: string | null
 }
 
 export interface TradesPayload {

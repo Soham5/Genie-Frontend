@@ -6,7 +6,8 @@ import { Empty } from './Panel'
 export interface Column<T> {
   key: string
   header: ReactNode
-  cell: (row: T) => ReactNode
+  /** `open` is true while the row's `expand` detail is showing. */
+  cell: (row: T, ctx: { open: boolean }) => ReactNode
   /** Provide to make the column sortable. */
   sort?: (row: T) => number | string | null
   align?: 'r' | 'c'
@@ -14,7 +15,7 @@ export interface Column<T> {
   tip?: string
 }
 
-export function DataTable<T>({ rows, columns, rowKey, initialSort, maxHeight, onRowClick, expand, emptyTitle = 'Nothing to show', emptyHint, dense }: {
+export function DataTable<T>({ rows, columns, rowKey, initialSort, maxHeight, onRowClick, expand, canExpand, emptyTitle = 'Nothing to show', emptyHint, dense }: {
   rows: T[]
   columns: Column<T>[]
   rowKey: (row: T) => string
@@ -23,6 +24,8 @@ export function DataTable<T>({ rows, columns, rowKey, initialSort, maxHeight, on
   onRowClick?: (row: T) => void
   /** When provided, rows toggle an expanded detail row on click. */
   expand?: (row: T) => ReactNode
+  /** Limits `expand` to the rows this accepts; the others behave as if `expand` were not set. */
+  canExpand?: (row: T) => boolean
   emptyTitle?: string
   emptyHint?: ReactNode
   dense?: boolean
@@ -71,17 +74,18 @@ export function DataTable<T>({ rows, columns, rowKey, initialSort, maxHeight, on
         <tbody>
           {sorted.map((row) => {
             const k = rowKey(row)
-            const isOpen = open === k
-            const clickable = !!(onRowClick || expand)
+            const expandable = !!expand && (canExpand?.(row) ?? true)
+            const isOpen = expandable && open === k
+            const clickable = expandable || !!onRowClick
             return (
               <Fragment key={k}>
                 <tr
                   className={clsx(clickable && 'clickable', isOpen && 'expanded')}
-                  onClick={() => (expand ? setOpen(isOpen ? null : k) : onRowClick?.(row))}
+                  onClick={() => (expandable ? setOpen(isOpen ? null : k) : onRowClick?.(row))}
                 >
                   {columns.map((c) => (
                     <td key={c.key} className={clsx(c.align, c.wrap && 'wrap')}>
-                      {c.cell(row)}
+                      {c.cell(row, { open: isOpen })}
                     </td>
                   ))}
                 </tr>

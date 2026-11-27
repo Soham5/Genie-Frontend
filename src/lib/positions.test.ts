@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fromClosed, fromLive, payoff, totals, type PosLeg } from './positions'
+import type { ApiTradeLeg } from '@/api/types'
+import { fromClosed, fromLive, optionLabel, payoff, payoffReady, totals, type PosLeg } from './positions'
 import type { ClosedTrade } from './trades'
 
 const leg = (action: 'BUY' | 'SELL', type: 'CE' | 'PE', strike: number, avg: number): PosLeg => ({
@@ -52,6 +53,51 @@ describe('fromClosed', () => {
   it('degrades gracefully for older trades with no stored detail', () => {
     const [p] = fromClosed([closed({ legs: [], side: null, exchange: null, symbol: 'RELIANCE', hasDetail: false })])
     expect(p).toMatchObject({ kind: 'equity', side: 'BUY', legs: [] })
+  })
+
+  describe('contract legs', () => {
+    const apiLeg = (over: Partial<ApiTradeLeg> = {}): ApiTradeLeg => ({
+      leg_no: 1, action: 'SELL', option_type: 'CE', strike: 100, lot_size: 65, qty: 65, symbol: 'NIFTY01DEC26100CE', underlying: 'NIFTY',
+      expiry: '2026-12-01', entry_price: 30, exit_price: 20, gross_pnl: 650, charges: { brokerage: 10, slippage: 5 }, net_pnl: 635, ...over,
+    })
+
+    it('reads each contract’s entry price, exit price and net P&L from the API leg', () => {
+      const [p] = fromClosed([
+        closed({ legs: [apiLeg(), apiLeg({ leg_no: 2, action: 'BUY', strike: 110, entry_price: 10, exit_price: 12, gross_pnl: -130, net_pnl: -145 })] }),
+      ])
+      expect(p.legs).toMatchObject([
+        { no: 1, action: 'SELL', strike: 100, expiry: '2026-12-01', avg: 30, ltp: 20, pnl: 635, lots: 1, source: 'exit' },
+        { no: 2, action: 'BUY', strike: 110, avg: 10, ltp: 12, pnl: -145, source: 'exit' },
+      ])
+    })
+
+    it('derives net P&L from gross P&L and charges when the API sends no net_pnl', () => {
+      const [p] = fromClosed([closed({ legs: [apiLeg({ net_pnl: undefined })] })])
+      expect(p.legs[0].pnl).toBe(635)
+    })
+
+    it('keeps the entry price of a contract that was not priced at exit and still draws the payoff', () => {
+      const [p] = fromClosed([
+        closed({
+          legs: [
+            apiLeg({ exit_price: null, gross_pnl: null, net_pnl: null }),
+            apiLeg({ leg_no: 2, option_type: 'PE', strike: 90, entry_price: 25, exit_price: null, gross_pnl: null, net_pnl: null }),
+          ],
+        }),
+      ])
+      expect(p.legs[0]).toMatchObject({ avg: 30, ltp: null, pnl: null, source: 'entry' })
+      expect(payoffReady(p.legs)).toBe(true)
+    })
+  })
+})
+
+describe('optionLabel', () => {
+  it('names the contract from its own expiry', () => {
+    expect(optionLabel({ strike: 25850, type: 'CE', expiry: '2026-12-01' }, 'NIFTY')).toBe('NIFTY 01DEC 25850 CE')
+  })
+
+  it('leaves out an expiry it cannot read instead of printing "Invalid Date"', () => {
+    expect(optionLabel({ strike: 25850, type: 'PE', expiry: '01-Dec-2026' }, 'NIFTY')).toBe('NIFTY 25850 PE')
   })
 })
 

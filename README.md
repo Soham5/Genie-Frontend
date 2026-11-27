@@ -32,11 +32,12 @@ Requirements on the Genie side:
 - **HTTPS.** GitHub Pages is HTTPS, so a plain `http://` API is blocked as mixed content.
 - **CORS.** `CORS_ALLOW_ORIGINS` must include the origin the site is served from.
 - **A read-only key.** The console never sends orders, starts the runner or flips the kill switch. The `/recon/*` endpoints need the trader role; without it the Risk page shows "Not permitted" for that panel.
-- **`GET /api/v1/console/trades`** (added to Genie in `app/api/routes/console.py`). Query: `from_date`, `to_date`, `strategy_id`, `deployment_mode`, `limit`. Returns closed trades, newest first.
+- **`GET /api/v1/console/trades`** (added to Genie in `app/api/routes/console.py`). Query: `from_date`, `to_date`, `strategy_id`, `deployment_mode`, `limit`. Returns closed trades, newest first. F&O combos carry one `legs` entry per contract (`symbol`, `expiry`, `strike`, `option_type`, `action`, `qty`, `lot_size`, `entry_price`, `exit_price`, `gross_pnl`, `charges`, `net_pnl`). Positions shows them as Avg., Exit and P&L; Orders expands each multi-leg order into its contracts.
 
 ## Known limits
 
-- **Older closed trades lack detail.** Genie now stores side, legs, charges, exit time and stop/target on every closed trade. Trades closed before that change only carry net P&L, so the UI shows `n/a` for gross and costs rather than zeros, and shows no legs.
+- **Older closed trades lack detail.** Genie now stores side, legs, charges, exit time and stop/target on every closed trade. Trades closed before that change only carry net P&L, so the UI shows `n/a` for gross and costs rather than zeros, and shows no legs. Trades closed after legs were stored but before per-contract exit prices were, and any contract that had no quote at close, show the entry price only: Exit and P&L stay `—` and the position's own P&L is unaffected.
+- **Contract P&L is a mark, not a fill.** A contract's exit price is the last price the engine had for it when the position closed, and its P&L is net of its share of costs. A position that exits at its stop or target price can therefore differ slightly from the sum of its contracts; the Positions page says so when it does.
 - **No API, no widget.** The API has no source for event/log feeds, rejected orders, risk-block lists, error feeds, scan-cycle history or VIX history, so those views are not built.
 - **Backtests** only show what the read endpoints return; walk-forward results are POST-only.
 

@@ -5,7 +5,7 @@ import { useApiState } from '@/api/ApiProvider'
 import { useSessionDate } from '@/api/session'
 import { useTrades } from '@/api/TradesProvider'
 import { useLiveBook } from '@/hooks/useLiveBook'
-import { fromClosed, optionLabel, payoff, payoffReady, scenarios, totals, type PosLeg, type Position } from '@/lib/positions'
+import { fromClosed, optionLabel, payoff, payoffReady, scenarios, totals, tradingSymbol, type PosLeg, type Position } from '@/lib/positions'
 import { fmtAgo, fmtDate, fmtINR, fmtNum, pnlTone, prettyStrategy } from '@/lib/format'
 import { Badge, Callout, Empty, PageHead, Panel, Seg, Skeleton } from '@/components/ui/Panel'
 import { SideChip } from '@/components/ui/bits'
@@ -189,13 +189,18 @@ function legBadge(l: PosLeg) {
   if (l.unmarked) return <Badge tone="warn" title="No fresh tick for this leg; LTP shows its entry price">no tick</Badge>
   switch (l.source) {
     case 'live': return <Badge tone="accent">live</Badge>
-    default: return <Badge tone="info" title="Entry price recorded when the trade opened; per-leg exit marks aren't stored">entry</Badge>
+    case 'exit': return <Badge tone="muted" title="Avg. is the entry price; Exit is the price this contract was marked at when the position closed">exit</Badge>
+    default: return <Badge tone="info" title="Only the entry price was recorded; this contract had no exit price when the position closed">entry only</Badge>
   }
 }
 
 function Detail({ p }: { p: Position }) {
   const pay = useMemo(() => payoff(p.legs), [p.legs])
   const missing = p.legs.length > 0 && !payoffReady(p.legs)
+  const closed = p.status === 'closed'
+  const unpriced = closed ? p.legs.filter((l) => l.ltp == null).length : 0
+  const legPnl = closed && p.legs.length > 0 && p.legs.every((l) => l.pnl != null) ? p.legs.reduce((sum, l) => sum + (l.pnl ?? 0), 0) : null
+  const drifts = legPnl != null && p.pnl != null && Math.abs(legPnl - p.pnl) >= 1
   return (
     <div className="stack">
       <dl className="kv" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, max-content))', gap: '6px 28px' }}>
@@ -203,7 +208,7 @@ function Detail({ p }: { p: Position }) {
         {p.expiry && <div><dt>Expiry</dt><dd className="num" style={{ textAlign: 'left' }}>{fmtDate(p.expiry)}</dd></div>}
         <div><dt>Stop</dt><dd className="num neg" style={{ textAlign: 'left' }}>{fmtNum(p.stop)}</dd></div>
         <div><dt>Target</dt><dd className="num pos" style={{ textAlign: 'left' }}>{fmtNum(p.target)}</dd></div>
-        {p.status === 'closed' && <div><dt>Exit</dt><dd className="num" style={{ textAlign: 'left' }}>{fmtNum(p.exitPrice)} @ {p.closedT?.slice(0, 8)}</dd></div>}
+        {closed && <div><dt>Exit</dt><dd className="num" style={{ textAlign: 'left' }}>{fmtNum(p.exitPrice)} @ {p.closedT?.slice(0, 8)}</dd></div>}
       </dl>
 
       {p.legs.length > 0 ? (
@@ -215,8 +220,8 @@ function Detail({ p }: { p: Position }) {
                 <th>Contract</th>
                 <th className="r">Qty.</th>
                 <th className="r">Avg.</th>
-                <th className="r">LTP</th>
-                <th className="r">P&amp;L</th>
+                <th className="r" title={closed ? 'Price the contract was marked at when the position closed' : undefined}>{closed ? 'Exit' : 'LTP'}</th>
+                <th className="r" title={closed ? "Net of this contract's share of charges and slippage" : undefined}>P&amp;L</th>
                 <th>Source</th>
               </tr>
             </thead>
@@ -224,7 +229,7 @@ function Detail({ p }: { p: Position }) {
               {p.legs.map((l) => (
                 <tr key={l.no}>
                   <td><SideChip side={l.action} /></td>
-                  <td>{optionLabel(l, p.underlying)}</td>
+                  <td title={tradingSymbol(l.symbol)}>{optionLabel(l, p.underlying)}</td>
                   <td className="r num">{l.qty}{l.lots != null && <span className="muted tiny"> · {fmtNum(l.lots, l.lots % 1 ? 1 : 0)}L</span>}</td>
                   <td className="r num">{fmtNum(l.avg)}</td>
                   <td className="r num">{fmtNum(l.ltp)}</td>
@@ -238,6 +243,12 @@ function Detail({ p }: { p: Position }) {
       ) : (
         <span className="muted">Single instrument — no multi-leg breakdown.</span>
       )}
+      {unpriced > 0 && (
+        <span className="muted tiny">
+          {unpriced === p.legs.length ? "Exit prices weren't recorded for this trade's contracts, so only their entry prices are shown." : `${unpriced} of ${p.legs.length} contracts had no exit price at close, so their Exit and P&L are blank.`} The position&apos;s own P&amp;L is unaffected.
+        </span>
+      )}
+      {drifts && <span className="muted tiny">Contract P&amp;L marks each leg at exit, but the position exits at its stop or target price, so the two can differ slightly.</span>}
 
       {pay && (
         <div className="grid cols-3-2" style={{ alignItems: 'start' }}>
