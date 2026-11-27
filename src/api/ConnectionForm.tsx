@@ -45,7 +45,7 @@ export function ConnectionForm() {
         </div>
       </form>
       {error && <p className="neg" style={{ margin: 0 }}>{error}</p>}
-      <Callout tone="warn" title="Use a read-only key.">The key is held in your browser and sent to your API. Never use a key that can start or stop trading.</Callout>
+      <Callout tone="warn" title="Prefer a read-only key.">The key is held in your browser and sent to your API. A read-only key can browse everything; only Backtest Lab's Strategy Backtest (a dry run that saves nothing) needs a trader-role key, which can also start and stop trading — use one only on a device you trust.</Callout>
       <Callout tone="info">GitHub Pages is HTTPS, so the API must be HTTPS too (plain <code>http://</code> is blocked as mixed content) and must allow this origin via <code>CORS_ALLOW_ORIGINS</code>.</Callout>
     </div>
   )

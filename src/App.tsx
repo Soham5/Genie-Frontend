@@ -14,7 +14,7 @@ const Strategies = lazy(() => import('@/pages/Strategies'))
 const Market = lazy(() => import('@/pages/Market'))
 const Risk = lazy(() => import('@/pages/Risk'))
 const System = lazy(() => import('@/pages/System'))
-const Backtests = lazy(() => import('@/pages/Backtests'))
+const BacktestLab = lazy(() => import('@/pages/BacktestLab'))
 const Settings = lazy(() => import('@/pages/Settings'))
 
 export function App() {
@@ -33,7 +33,7 @@ export function App() {
                 <Route path="market" element={<Market />} />
                 <Route path="risk" element={<Risk />} />
                 <Route path="system" element={<System />} />
-                <Route path="backtests" element={<Backtests />} />
+                <Route path="backtests" element={<BacktestLab />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>

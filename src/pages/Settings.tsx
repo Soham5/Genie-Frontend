@@ -41,7 +41,7 @@ export default function Settings() {
           <div className="divider" />
           <ul className="muted" style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.7 }}>
             <li>Polled endpoints: <code>/health</code>, <code>/kill/status</code>, <code>/papertrade/runner</code>, <code>/papertrade/pnl</code> and <code>/console/trades</code>, plus page-specific reads.</li>
-            <li>This console is read-only: it never sends orders, starts the runner or flips the kill switch.</li>
+            <li>This console never sends orders, starts the runner or flips the kill switch. Its only write is the Strategy Backtest dry run in Backtest Lab, which saves nothing and needs a trader-role key.</li>
             {unsupported && <li className="neg"><code>/console/trades</code> returned 404 — update the Genie backend to a version that includes the console router.</li>}
             {truncated && <li>The API returned its row limit; older trades are not shown.</li>}
             <li>Nothing here is investment advice.</li>

@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts'
-import { Link } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { useApi } from '@/api/useApi'
 import { useApiState } from '@/api/ApiProvider'
-import { Badge, Callout, Empty, PageHead, Panel, Seg, Skeleton } from '@/components/ui/Panel'
+import { Badge, Callout, Empty, Panel, Seg, Skeleton } from '@/components/ui/Panel'
 import { Stat } from '@/components/ui/Stat'
 import { DataTable, type Column } from '@/components/ui/DataTable'
 import { ApiErrorNote } from '@/components/ui/ApiErrorNote'
@@ -35,7 +34,8 @@ const flagsOf = (r: Run) =>
 
 const isImplausible = (r: Run) => flagsOf(r).some((f) => f.key === 'implausible')
 
-export default function Backtests() {
+/** The "Stored Results" tab of Backtest Lab: runs the API has saved, with their gate verdicts and run history. */
+export default function StoredBacktests() {
   const api = useApiState()
   const list = useApi<{ count: number; results: RunSummary[] }>('/backtest/results', { enabled: api.status !== 'unconfigured' })
   const [view, setView] = useState<View>('latest')
@@ -127,15 +127,6 @@ export default function Backtests() {
     },
   ]
 
-  if (api.status === 'unconfigured') {
-    return (
-      <>
-        <PageHead title="Backtest Lab" sub="Stored backtest results from the Genie API" />
-        <Callout tone="info" title="Not connected.">Set the API URL and key in <Link className="link-btn" to="/settings">Settings</Link> to load backtest results.</Callout>
-      </>
-    )
-  }
-
   const refresh = () => {
     list.refresh()
     details.refresh()
@@ -143,17 +134,16 @@ export default function Backtests() {
 
   return (
     <>
-      <PageHead
-        title="Backtest Lab"
-        sub={list.data ? `${list.data.count} stored runs · ${strategyIds.length} strategies${lastRun ? ` · latest ${fmtDay(lastRun)}` : ''}` : 'Stored backtest results from the Genie API'}
-        actions={
-          <>
-            <Seg<View> label="Runs" value={view} onChange={setView} options={[{ value: 'latest', label: 'Latest per strategy' }, { value: 'all', label: 'All runs' }]} />
-            <Seg<Gate> label="Approval gate" value={gate} onChange={setGate} options={[{ value: 'all', label: 'Any' }, { value: 'approved', label: 'Approved' }, { value: 'rejected', label: 'Rejected' }]} />
-            <button type="button" className="chip" onClick={refresh} aria-label="Reload backtest results"><RefreshCw size={12} /> Reload</button>
-          </>
-        }
-      />
+      <div className="row row--between row--wrap">
+        <p className="muted">
+          {list.data ? `${list.data.count} stored runs · ${strategyIds.length} strategies${lastRun ? ` · latest ${fmtDay(lastRun)}` : ''}` : 'Stored backtest results from the Genie API'}
+        </p>
+        <div className="page__actions">
+          <Seg<View> label="Runs" value={view} onChange={setView} options={[{ value: 'latest', label: 'Latest per strategy' }, { value: 'all', label: 'All runs' }]} />
+          <Seg<Gate> label="Approval gate" value={gate} onChange={setGate} options={[{ value: 'all', label: 'Any' }, { value: 'approved', label: 'Approved' }, { value: 'rejected', label: 'Rejected' }]} />
+          <button type="button" className="chip" onClick={refresh} aria-label="Reload backtest results"><RefreshCw size={12} /> Reload</button>
+        </div>
+      </div>
       <div className="stack">
         {list.loading ? (
           <div className="stack" aria-busy="true">

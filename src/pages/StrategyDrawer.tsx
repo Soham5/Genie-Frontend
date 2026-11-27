@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { X } from 'lucide-react'
+import { FlaskConical, X } from 'lucide-react'
 import { useApi } from '@/api/useApi'
 import { Badge, Empty, Skeleton } from '@/components/ui/Panel'
 import { DataTable, type Column } from '@/components/ui/DataTable'
@@ -101,6 +102,7 @@ export function StrategyDrawer({ id, cfg, trades, positions, stats, onClose }: {
   onClose: () => void
 }) {
   const closeRef = useRef<HTMLButtonElement>(null)
+  const { search } = useLocation()
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null
     closeRef.current?.focus()
@@ -157,6 +159,11 @@ export function StrategyDrawer({ id, cfg, trades, positions, stats, onClose }: {
               {!registered && <Badge tone="warn" title="Trades exist for this id but the API's strategy registry doesn't list it.">not in registry</Badge>}
             </div>
             {cfg && <div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>{cfg.class_name}</div>}
+            {registered && (
+              <Link className="btn btn--sm" style={{ marginTop: 10 }} to={{ pathname: '/backtests', search }} state={{ strategies: [id] }}>
+                <FlaskConical size={13} /> Backtest this strategy
+              </Link>
+            )}
           </div>
           <button ref={closeRef} type="button" className="sdrawer__close" onClick={onClose} aria-label="Close details">
             <X size={16} />

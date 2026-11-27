@@ -60,21 +60,50 @@ export function buildUrl(base: string, path: string, params?: Params): string {
 
 const NETWORK_MESSAGE = 'Cannot reach the Genie API. It must be served over HTTPS with CORS allowing this site.'
 
-/** GET JSON from the Genie API. Throws `ApiError` (status 0 = network/CORS/timeout). */
-export async function apiGet<T>(path: string, params?: Params, opts: { signal?: AbortSignal; timeoutMs?: number; base?: string } = {}): Promise<T> {
+export interface RequestOpts {
+  signal?: AbortSignal
+  timeoutMs?: number
+  base?: string
+}
+
+/** FastAPI sends a string `detail` for HTTP errors and a list of `{ loc, msg }` for request-validation failures. */
+export function formatApiDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (!Array.isArray(detail)) return ''
+  return detail
+    .map((item) => {
+      if (!item || typeof item !== 'object' || !('msg' in item)) return ''
+      const { loc, msg } = item as { loc?: unknown; msg: unknown }
+      const field = Array.isArray(loc) ? loc.filter((p) => p !== 'body').join('.') : ''
+      return field ? `${field}: ${String(msg)}` : String(msg)
+    })
+    .filter(Boolean)
+    .join('; ')
+}
+
+async function request<T>(method: 'GET' | 'POST', path: string, params: Params | undefined, body: unknown, opts: RequestOpts, timeoutMessage: string): Promise<T> {
   const base = opts.base ?? getApiBase()
   if (!base) throw new ApiError(0, 'No API URL configured.')
   const ctl = new AbortController()
-  const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 10000)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    ctl.abort()
+  }, opts.timeoutMs ?? 10000)
   const onAbort = () => ctl.abort()
   opts.signal?.addEventListener('abort', onAbort)
   try {
-    const res = await fetch(buildUrl(base, path, params), { headers: { Accept: 'application/json', ...authHeaders() }, signal: ctl.signal })
+    const hasBody = body !== undefined
+    const res = await fetch(buildUrl(base, path, params), {
+      method,
+      headers: { Accept: 'application/json', ...(hasBody ? { 'Content-Type': 'application/json' } : {}), ...authHeaders() },
+      body: hasBody ? JSON.stringify(body) : undefined,
+      signal: ctl.signal,
+    })
     if (!res.ok) {
       let detail = ''
       try {
-        const body = (await res.json()) as { detail?: unknown }
-        detail = typeof body.detail === 'string' ? body.detail : ''
+        detail = formatApiDetail(((await res.json()) as { detail?: unknown }).detail)
       } catch {
         /* non-JSON error body */
       }
@@ -85,11 +114,27 @@ export async function apiGet<T>(path: string, params?: Params, opts: { signal?: 
   } catch (e) {
     if (e instanceof ApiError) throw e
     if (opts.signal?.aborted) throw e
-    throw new ApiError(0, NETWORK_MESSAGE)
+    throw new ApiError(0, timedOut ? timeoutMessage : NETWORK_MESSAGE)
   } finally {
     clearTimeout(timer)
     opts.signal?.removeEventListener('abort', onAbort)
   }
+}
+
+/** GET JSON from the Genie API. Throws `ApiError` (status 0 = network/CORS/timeout). */
+export function apiGet<T>(path: string, params?: Params, opts: RequestOpts = {}): Promise<T> {
+  return request<T>('GET', path, params, undefined, opts, NETWORK_MESSAGE)
+}
+
+/**
+ * POST a JSON body to the Genie API. Defaults to a 10-minute timeout because backtests simulate months
+ * of bars; abort through `opts.signal`, which rethrows the original `AbortError` instead of an `ApiError`.
+ */
+export function apiPost<T>(path: string, body: unknown, opts: RequestOpts = {}): Promise<T> {
+  const timeoutMs = opts.timeoutMs ?? 600_000
+  const minutes = Math.round(timeoutMs / 60_000)
+  const message = minutes >= 1 ? `The API did not answer within ${minutes} min, so the request was stopped.` : 'The API did not answer in time.'
+  return request<T>('POST', path, undefined, body, { ...opts, timeoutMs }, message)
 }
 
 /** Numbers arrive as numbers or strings (e.g. `/risk/session`); returns null when not numeric. */

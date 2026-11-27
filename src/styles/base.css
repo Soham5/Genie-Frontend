@@ -17,6 +17,7 @@
   --faint: #566074;
 
   --accent: #4cc9f0;
+  --accent-ink: #4cc9f0;
   --accent-soft: rgba(76, 201, 240, 0.14);
   --pos: #34d399;
   --pos-soft: rgba(52, 211, 153, 0.14);
@@ -49,6 +50,7 @@
   --faint: #95a0b4;
 
   --accent: #0b7fa8;
+  --accent-ink: #0a6f96;
   --accent-soft: rgba(11, 127, 168, 0.1);
   --pos: #0f9b6c;
   --pos-soft: rgba(15, 155, 108, 0.11);

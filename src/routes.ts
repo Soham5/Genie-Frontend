@@ -18,6 +18,6 @@ export const ROUTES: RouteDef[] = [
   { path: '/market', label: 'Market', icon: LineChart, primary: true, keywords: 'vix pcr max pain option chain nse' },
   { path: '/risk', label: 'Risk', icon: ShieldAlert, primary: true, keywords: 'risk gate kill switch compliance circuit breaker' },
   { path: '/system', label: 'System Health', icon: Activity, primary: false, keywords: 'broker websocket scheduler runner health' },
-  { path: '/backtests', label: 'Backtest Lab', icon: FlaskConical, primary: false, keywords: 'walk forward sharpe synthetic' },
+  { path: '/backtests', label: 'Backtest Lab', icon: FlaskConical, primary: false, keywords: 'strategy backtest run simulate slippage equity curve drawdown calendar transactions csv stored results walk forward sharpe synthetic' },
   { path: '/settings', label: 'Settings', icon: Settings, primary: false, keywords: 'theme api key url connect' },
 ]
